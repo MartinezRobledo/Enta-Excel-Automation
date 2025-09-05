@@ -1,0 +1,5 @@
+#generated folders
+/build/
+/.gradle/
+/.idea/
+/src/test/target/

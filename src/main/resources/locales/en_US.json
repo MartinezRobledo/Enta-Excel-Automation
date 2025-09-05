@@ -1,0 +1,6 @@
+{
+  "label": "Enta Excel Automation",
+  "description": "Provides action for automate excel process",
+  "sessionLabel": "Excel session",
+  "sessionDescription": "Excel session storing information related to open excels."
+}
