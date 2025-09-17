@@ -4,12 +4,10 @@ import com.jacob.com.Dispatch;
 import com.jacob.com.Variant;
 import com.automationanywhere.botcommand.exception.BotCommandException;
 
-import java.util.Map;
-
-public class ExcelSessionHelper {
+public class SessionHelper {
 
     // Obtener libro abierto por nombre
-    public static Dispatch getWorkbook(ExcelSession session, String workbookName) {
+    public static Dispatch getWorkbook(Session session, String workbookName) {
         Dispatch wb = session.openWorkbooks.get(workbookName);
         if (wb == null) {
             throw new BotCommandException("Workbook not found in session: " + workbookName);

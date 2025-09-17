@@ -3,8 +3,8 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
+import com.automationanywhere.botcommand.utilities.SessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
 import com.automationanywhere.commandsdk.model.AttributeType;
@@ -33,7 +33,7 @@ public class CloseExcelSession {
             @Pkg(label = "Save all open workbooks before closing", default_value_type = DataType.BOOLEAN, default_value = "false")
             Boolean saveAll
     ) {
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null) {
             throw new BotCommandException("Session not found: " + sessionId);
         }
@@ -56,7 +56,7 @@ public class CloseExcelSession {
         } catch (Exception e) {
             // ignorar errores y pasar a taskkill
         } finally {
-            ExcelSessionManager.removeSession(sessionId);
+            SessionManager.removeSession(sessionId);
             try {
                 Runtime.getRuntime().exec("taskkill /F /IM EXCEL.EXE");
             } catch (Exception ex) {

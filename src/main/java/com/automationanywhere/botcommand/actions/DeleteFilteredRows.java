@@ -1,11 +1,10 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
+import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
-import com.automationanywhere.commandsdk.annotations.rules.SelectModes;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
@@ -13,7 +12,7 @@ import com.jacob.com.Variant;
 
 @BotCommand
 @CommandPkg(
-        label = "Delete Rows",
+        label = "Delete Filtered Rows",
         name = "deleteRows",
         description = "Elimina todas las filas visibles",
         icon = "excel.svg"
@@ -46,7 +45,7 @@ public class DeleteFilteredRows {
         if (headerRowNumber == null || headerRowNumber < 1)
             throw new BotCommandException("Header row number must be a positive integer.");
 
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null)
             throw new BotCommandException("Excel session not found: " + sessionId);
 

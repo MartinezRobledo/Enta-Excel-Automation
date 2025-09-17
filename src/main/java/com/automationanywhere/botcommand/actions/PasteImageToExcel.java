@@ -1,8 +1,8 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
+import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
 import com.automationanywhere.commandsdk.model.AttributeType;
@@ -59,7 +59,7 @@ public class PasteImageToExcel {
             Double heightCells
     ) {
 
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null) {
             throw new BotCommandException("Excel session not found: " + sessionId);
         }

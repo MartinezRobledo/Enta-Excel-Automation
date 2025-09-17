@@ -1,8 +1,8 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
+import com.automationanywhere.botcommand.utilities.SessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.*;
 import com.automationanywhere.commandsdk.model.AttributeType;
@@ -66,41 +66,12 @@ public class CopySheet {
             @NotEmpty
             String destSheetName,
 
-            @Idx(index = "6", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "6.1", pkg = @Pkg(label = "Overwrite", value = "overwrite")),
-                    @Idx.Option(index = "6.2", pkg = @Pkg(label = "Append", value = "append"))
-            })
-            @Pkg(label = "Select copy mode", default_value = "overwrite", default_value_type = DataType.STRING)
+            @Idx(index = "6", type = AttributeType.CHECKBOX)
+            @Pkg(label = "Overwrite destination sheet", default_value = "true", default_value_type = DataType.BOOLEAN)
             @SelectModes
-            String selectCopyMode,
-
-            @Idx(index = "7", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "7.1", pkg = @Pkg(label = "Si", value = "Si")),
-                    @Idx.Option(index = "7.2", pkg = @Pkg(label = "No", value = "No"))
-            })
-            @Pkg(label = "Ignore columns?", default_value = "No", default_value_type = DataType.STRING)
-            @SelectModes
-            String applyIgnoreCol,
-
-            @Idx(index = "7.1.1", type = AttributeType.LIST)
-            @Pkg(label = "Columns to ignore (letters; e.g., A,B,C)")
-            List<Object> ignoreColumns,
-
-            //Nueva funcionalidad a impactar
-            @Idx(index = "8", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "8.1", pkg = @Pkg(label = "Si", value = "Si")),
-                    @Idx.Option(index = "8.2", pkg = @Pkg(label = "No", value = "No"))
-            })
-            @Pkg(label = "Ignore headers?", default_value = "Si", default_value_type = DataType.STRING)
-            @SelectModes
-            String preserveHeaders,
-
-            @Idx(index = "8.1.1", type = AttributeType.TEXT)
-            @Pkg(label = "Headers range (e.g., A3:H3)")
-            @NotEmpty
-            String rangeHeaders
+            Boolean overwrite
     ) {
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null)
             throw new BotCommandException("Session not found: " + sessionId);
 
@@ -133,7 +104,7 @@ public class CopySheet {
             Dispatch sourceUsedRange = Dispatch.get(originSheet, "UsedRange").toDispatch();
             Dispatch destStart;
 
-            if ("overwrite".equalsIgnoreCase(selectCopyMode)) {
+            if (overwrite) {
                 if (destSheet == null) {
                     // Crear hoja si no existe
                     destSheet = Dispatch.call(destSheets, "Add").toDispatch();
@@ -144,86 +115,13 @@ public class CopySheet {
                     Dispatch.call(usedRange, "Clear");
                 }
                 destStart = Dispatch.call(destSheet, "Range", "A1").toDispatch();
-            } else if ("append".equalsIgnoreCase(selectCopyMode)) {
-                if (destSheet == null) {
-                    throw new BotCommandException("Destination sheet does not exist. Cannot append.");
-                }
-                Dispatch usedRange = Dispatch.get(destSheet, "UsedRange").toDispatch();
-                int lastRow = Dispatch.get(Dispatch.get(usedRange, "Rows").toDispatch(), "Count").getInt();
-                lastRow = lastRow > 0 ? lastRow + 1 : 1;
-                destStart = Dispatch.call(destSheet, "Cells", lastRow, 1).toDispatch();
-            } else {
-                throw new BotCommandException("Invalid copy mode: " + selectCopyMode);
             }
 
             // Copiar contenido
-            Dispatch.call(sourceUsedRange, "Copy", destStart);
-
-            // Eliminar columnas ignoradas si corresponde
-            if ("Si".equalsIgnoreCase(applyIgnoreCol) && ignoreColumns != null && !ignoreColumns.isEmpty()) {
-                List<String> colsToDelete = new ArrayList<>();
-                for (Object o : ignoreColumns) {
-                    if (o == null) continue;
-                    String s = o.toString();
-                    if (!s.trim().isEmpty()) {
-                        for (String part : s.split(",")) {
-                            if (!part.trim().isEmpty()) colsToDelete.add(part.trim().toUpperCase());
-                        }
-                    }
-                }
-
-                Collections.sort(colsToDelete, (a, b) -> Integer.compare(excelColumnLetterToNumber(b), excelColumnLetterToNumber(a)));
-                for (String colLetter : colsToDelete) {
-                    try {
-                        Dispatch colRange = Dispatch.call(destSheet, "Columns", colLetter).toDispatch();
-                        Dispatch.call(colRange, "Delete");
-                    } catch (Exception ex) {
-                        // Ignorar columnas inválidas
-                    }
-                }
-            }
-
-            // Nueva funcionalidad: ignorar encabezados
-            if ("Si".equalsIgnoreCase(preserveHeaders) && rangeHeaders != null && !rangeHeaders.trim().isEmpty()) {
-                try {
-                    // Parsear la letra de columna y la fila de inicio del rango original
-                    String[] parts = rangeHeaders.split(":");
-                    if (parts.length != 2) {
-                        throw new BotCommandException("Rango de encabezados inválido: " + rangeHeaders);
-                    }
-
-                    String startCell = parts[0].toUpperCase();
-                    String endCell = parts[1].toUpperCase();
-
-                    int startCol = excelColumnLetterToNumber(startCell.replaceAll("\\d", ""));
-                    int startRow = Integer.parseInt(startCell.replaceAll("\\D", ""));
-                    int endCol = excelColumnLetterToNumber(endCell.replaceAll("\\d", ""));
-                    int endRow = Integer.parseInt(endCell.replaceAll("\\D", ""));
-
-                    // Obtener la fila de destino donde se pegó la primera celda
-                    int destStartRow = Dispatch.get(destStart, "Row").getInt();
-
-                    // Ajustar el rango de headers a la fila de destino
-                    String destRange = numberToColumnLetter(startCol) + destStartRow + ":" + numberToColumnLetter(endCol) + (destStartRow + (endRow - startRow));
-
-                    Dispatch headerRange = Dispatch.call(destSheet, "Range", destRange).toDispatch();
-                    Dispatch.call(headerRange, "Delete", -4162); // xlShiftUp
-                } catch (Exception ex) {
-                    throw new BotCommandException("Error al borrar el rango de encabezados: " + ex.getMessage());
-                }
-            }
-
+            Dispatch.call(sourceUsedRange, "Copy", "A1");
 
         } catch (Exception e) {
             throw new BotCommandException("Error copying sheet content: " + e.getMessage());
         }
-    }
-
-    private static int excelColumnLetterToNumber(String col) {
-        int res = 0;
-        for (int i = 0; i < col.length(); i++) {
-            res = res * 26 + (col.charAt(i) - 'A' + 1);
-        }
-        return res;
     }
 }

@@ -4,10 +4,7 @@ import com.automationanywhere.botcommand.data.Value;
 import com.jacob.com.Dispatch;
 import com.jacob.com.Variant;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class ExcelHelpers {
 
@@ -141,4 +138,75 @@ public class ExcelHelpers {
         return sb.toString();
     }
 
+    // Convierte letras de columna → número (A=1, B=2, ...)
+    private static int colLetterToNumber(String col) {
+        int res = 0;
+        for (int i = 0; i < col.length(); i++) {
+            res = res * 26 + (col.charAt(i) - 'A' + 1);
+        }
+        return res;
+    }
+
+    // Convierte número → letras (1=A, 2=B, ...)
+    private static String colNumberToLetter(int num) {
+        StringBuilder sb = new StringBuilder();
+        while (num > 0) {
+            int rem = (num - 1) % 26;
+            sb.insert(0, (char) ('A' + rem));
+            num = (num - 1) / 26;
+        }
+        return sb.toString();
+    }
+
+    // Divide un rango en sub-rangos excluyendo columnas ignoradas
+    public static List<String> splitRangeByIgnoredColumns(String fullRange, List<String> ignoreCols) {
+        List<String> result = new ArrayList<>();
+
+        // Ej: fullRange = "B3:G40"
+        String[] parts = fullRange.split(":");
+        if (parts.length != 2) return Collections.singletonList(fullRange);
+
+        String startCell = parts[0].toUpperCase();
+        String endCell = parts[1].toUpperCase();
+
+        int startCol = colLetterToNumber(startCell.replaceAll("\\d", ""));
+        int startRow = Integer.parseInt(startCell.replaceAll("\\D", ""));
+        int endCol = colLetterToNumber(endCell.replaceAll("\\d", ""));
+        int endRow = Integer.parseInt(endCell.replaceAll("\\D", ""));
+
+        // Pasar columnas a ignorar a números
+        Set<Integer> ignoreSet = new HashSet<>();
+        for (String col : ignoreCols) {
+            if (col != null && !col.trim().isEmpty()) {
+                ignoreSet.add(colLetterToNumber(col.trim().toUpperCase()));
+            }
+        }
+
+        int col = startCol;
+        while (col <= endCol) {
+            // Saltar columnas ignoradas
+            while (col <= endCol && ignoreSet.contains(col)) {
+                col++;
+            }
+            if (col > endCol) break;
+
+            int blockStart = col;
+            // Avanzar hasta la siguiente ignorada o final
+            while (col <= endCol && !ignoreSet.contains(col)) {
+                col++;
+            }
+            int blockEnd = col - 1;
+
+            // Armar sub-rango
+            String subRange = colNumberToLetter(blockStart) + startRow + ":" +
+                    colNumberToLetter(blockEnd) + endRow;
+            result.add(subRange);
+        }
+
+        return result;
+    }
+
 }
+
+
+

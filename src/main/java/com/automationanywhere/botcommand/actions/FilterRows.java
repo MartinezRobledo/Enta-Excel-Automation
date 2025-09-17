@@ -1,9 +1,12 @@
 package com.automationanywhere.botcommand.actions;
 
+import java.util.*;
+import java.util.stream.Collectors;
+
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
+import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.EntryList.EntryListAddButtonLabel;
 import com.automationanywhere.commandsdk.annotations.rules.EntryList.EntryListEmptyLabel;
@@ -14,12 +17,13 @@ import com.automationanywhere.commandsdk.annotations.rules.SelectModes;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
+import com.jacob.com.SafeArray;
 import com.jacob.com.Variant;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+// Asumimos los imports/annotaciones del SDK de tu bot framework (Automation Anywhere Package SDK)
+// import com.automationanywhere.commands.annotations.*;
+// import com.automationanywhere.core.*;
+// etc.
 
 @BotCommand
 @CommandPkg(
@@ -56,17 +60,17 @@ public class FilterRows {
                     @Idx.Option(index = "3.1", pkg = @Pkg(label = "Name", value = "name")),
                     @Idx.Option(index = "3.2", pkg = @Pkg(label = "Index", value = "index"))
             })
-            @Pkg(label = "Select origin sheet by", default_value = "name", default_value_type = DataType.STRING)
+            @Pkg(label = "Select sheet by", default_value = "name", default_value_type = DataType.STRING)
             @SelectModes
             String selectSheetBy,
 
             @Idx(index = "3.1.1", type = AttributeType.TEXT)
-            @Pkg(label = "Origin Sheet Name")
+            @Pkg(label = "Sheet Name")
             @NotEmpty
             String originSheetName,
 
             @Idx(index = "3.2.1", type = AttributeType.NUMBER)
-            @Pkg(label = "Origin Sheet Index (1-based)")
+            @Pkg(label = "Sheet Index (1-based)")
             @NotEmpty
             Double originSheetIndex,
 
@@ -81,17 +85,19 @@ public class FilterRows {
             @Pkg(label = "Aplicar TRIM a encabezados (solo si usa nombre)", default_value = "true", default_value_type = DataType.BOOLEAN)
             Boolean trimHeaders,
 
+            @Idx(index = "4.2.2", type = AttributeType.TEXT)
+            @Pkg(label = "Headers range (e.g., C9:BM9)")
+            @NotEmpty
+            String headersRange,
+
             @Idx(index = "5", type = AttributeType.ENTRYLIST, options = {
                     @Idx.Option(index = "5.1", pkg = @Pkg(title = "Column", label = "Column")),
                     @Idx.Option(index = "5.2", pkg = @Pkg(title = "Criteria", label = "Criteria"))
             })
-            @Pkg(label = "Provide filter entries")
+            @Pkg(label = "Provide filter entries criteria o multiple criterias delimited by ;")
             @EntryListLabel(value = "Provide entry")
-            //Button label which displays the entry form
             @EntryListAddButtonLabel(value = "Add entry")
-            //Unique rule for the column, this value is the column TITLE.
-            @EntryListEntryUnique(value = "NAME")
-            //Message to dispaly in the table when no entries are present.
+            //@EntryListEntryUnique(value = "Column")
             @EntryListEmptyLabel(value = "No parameters added")
             List<Value> entryList
     ) {
@@ -100,19 +106,17 @@ public class FilterRows {
             throw new BotCommandException("No filter entries provided. Please add at least one entry.");
         }
 
-        // Convertir entryList a Map<columna, valores>
-        Map<String, List<String>> criteriaMap = new HashMap<>();
+        // Normalizar/validar y agrupar criterios por columna (permite OR en una misma columna)
+        Map<String, List<String>> criteriaMap = new LinkedHashMap<>();
         int entryIndex = 1;
-
         for (Value v : entryList) {
             @SuppressWarnings("unchecked")
             Map<String, Object> row = (Map<String, Object>) v.get();
 
-            String colKey = row.get("Column") != null ? row.get("Column").toString().trim() :
-                    row.get("column") != null ? row.get("column").toString().trim() : "";
-
-            String criteria = row.get("Criteria") != null ? row.get("Criteria").toString().trim() :
-                    row.get("criteria") != null ? row.get("criteria").toString().trim() : "";
+            String colKey = row.get("Column") != null ? row.get("Column").toString().trim()
+                    : row.get("column") != null ? row.get("column").toString().trim() : "";
+            String criteria = row.get("Criteria") != null ? row.get("Criteria").toString().trim()
+                    : row.get("criteria") != null ? row.get("criteria").toString().trim() : "";
 
             if (colKey.isEmpty()) {
                 throw new BotCommandException("Entry " + entryIndex + ": Column value cannot be empty.");
@@ -121,12 +125,20 @@ public class FilterRows {
                 throw new BotCommandException("Entry " + entryIndex + ": Criteria value cannot be empty.");
             }
 
-            criteriaMap.computeIfAbsent(colKey, k -> new ArrayList<>()).add(criteria);
+            // Dividir el string de criterios por ';' y agregar cada uno por separado
+            String[] criteriaParts = criteria.split(";");
+            for (String c : criteriaParts) {
+                String trimmed = c.trim();
+                if (!trimmed.isEmpty()) {
+                    criteriaMap.computeIfAbsent(colKey, k -> new ArrayList<>()).add(trimmed);
+                }
+            }
+
             entryIndex++;
         }
 
-
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        // ---------- Obtener sesión/Excel/Workbook/Sheet ----------
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null)
             throw new BotCommandException("Session not found: " + sessionId);
 
@@ -139,49 +151,208 @@ public class FilterRows {
                 ? Dispatch.call(sheets, "Item", originSheetIndex.intValue()).toDispatch()
                 : Dispatch.call(sheets, "Item", originSheetName).toDispatch();
 
-        Dispatch usedRange = Dispatch.get(sheet, "UsedRange").toDispatch();
-        int firstRow = Dispatch.get(usedRange, "Row").getInt();
-        int totalCols = Dispatch.get(Dispatch.get(usedRange, "Columns").toDispatch(), "Count").getInt();
+        // ---------- Parsear rango de encabezados ----------
+        HeaderRange hr = parseHeaderRange(headersRange); // valida formato y misma fila
+        int headerRow = hr.row;
+        int headerStartCol = hr.startCol;
+        int headerEndCol = hr.endCol;
+        if (headerEndCol < headerStartCol) {
+            throw new BotCommandException("Headers range inválido: la columna final es menor a la inicial.");
+        }
 
-        // Map headers si referenceMode = header
-        Map<String, Integer> headerToIndex = new HashMap<>();
-        if ("header".equalsIgnoreCase(referenceMode)) {
-            for (int c = 1; c <= totalCols; c++) {
-                Dispatch cell = Dispatch.call(sheet, "Cells", firstRow, c).toDispatch();
-                String val = safeVariantToString(Dispatch.get(cell, "Value"));
-                if (trimHeaders && val != null) val = val.trim();
-                headerToIndex.put(val.toLowerCase(), c);
+        // ---------- Última fila usada ----------
+        int lastRow = Math.max(headerRow, getLastRow(sheet));
 
+        // ---------- Detectar si hay tabla que incluya el headerRow ----------
+        Dispatch dataRange = null;
+        Dispatch listObjects = Dispatch.get(sheet, "ListObjects").toDispatch();
+        int tableCount = Dispatch.get(listObjects, "Count").getInt();
+
+        if (tableCount > 0) {
+            for (int i = 1; i <= tableCount; i++) {
+                Dispatch table = Dispatch.call(listObjects, "Item", i).toDispatch();
+                Dispatch tableRange = Dispatch.get(table, "Range").toDispatch();
+
+                int tblFirstRow = Dispatch.get(tableRange, "Row").getInt();
+                int tblLastRow = tblFirstRow +
+                        Dispatch.get(Dispatch.get(tableRange, "Rows").toDispatch(), "Count").getInt() - 1;
+
+                if (headerRow >= tblFirstRow && headerRow <= tblLastRow) {
+                    dataRange = tableRange; // usamos toda la tabla
+                    break;
+                }
             }
         }
 
-        // Aplicar AutoFilter para cada entrada
-        for (Value v : entryList) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> row = (Map<String, Object>) v.get();
-            String colKey = row.get("Column") != null ? row.get("Column").toString() : "";
-            String criteria = row.get("Criteria") != null ? row.get("Criteria").toString() : "";
+        // Si no encontramos tabla, usamos rango normal
+        if (dataRange == null) {
+            Dispatch topLeft = Dispatch.call(sheet, "Cells", headerRow, headerStartCol).toDispatch();
+            Dispatch bottomRight = Dispatch.call(sheet, "Cells", lastRow, headerEndCol).toDispatch();
+            dataRange = Dispatch.call(sheet, "Range", topLeft, bottomRight).toDispatch();
+        }
 
-            String keyNorm = colKey.trim().toLowerCase();
-            int colIndex = "letter".equalsIgnoreCase(referenceMode)
-                    ? excelColumnLetterToNumber(colKey)
-                    : headerToIndex.getOrDefault(keyNorm, -1);
+        // ---------- Map headers si referenceMode = header ----------
+        Map<String, Integer> headerToIndex = new HashMap<>();
+        if ("header".equalsIgnoreCase(referenceMode)) {
+            boolean doTrim = (trimHeaders == null) ? true : trimHeaders;
+            int field = 1;
+            for (int col = headerStartCol; col <= headerEndCol; col++, field++) {
+                Dispatch cell = Dispatch.call(sheet, "Cells", headerRow, col).toDispatch();
+                String val = safeVariantToString(Dispatch.get(cell, "Value"));
+                if (doTrim && val != null) val = val.trim();
+                if (val != null && !val.isEmpty()) {
+                    headerToIndex.put(val.toLowerCase(), field); // 1-based relativo al rango
+                }
+            }
+        }
 
-            if (colIndex <= 0) {
-                throw new BotCommandException("Invalid column: " + colKey + ". Index: " + keyNorm + ". Letter: " + colIndex);
+        // ---------- Aplicar AutoFilter ----------
+        for (Map.Entry<String, List<String>> e : criteriaMap.entrySet()) {
+            String colKeyOriginal = e.getKey();
+            String keyNorm = colKeyOriginal.trim().toLowerCase();
+
+            int fieldIndex;
+            if ("letter".equalsIgnoreCase(referenceMode)) {
+                int absCol = excelColumnLetterToNumber(colKeyOriginal);
+                if (absCol < headerStartCol || absCol > headerEndCol) {
+                    throw new BotCommandException(
+                            "Column letter '" + colKeyOriginal + "' (col " + absCol + ") está fuera del headers range [" +
+                                    columnNumberToLetter(headerStartCol) + ":" + columnNumberToLetter(headerEndCol) + "]."
+                    );
+                }
+                fieldIndex = (absCol - headerStartCol) + 1; // 1-based relativo al rango
+            } else { // header
+                fieldIndex = headerToIndex.getOrDefault(keyNorm, -1);
+                if (fieldIndex <= 0) {
+                    String available = String.join(", ",
+                            headerToIndex.keySet().stream().sorted().collect(Collectors.toList()));
+                    throw new BotCommandException(
+                            "Header '" + colKeyOriginal + "' no encontrado en la fila " + headerRow +
+                                    ". Headers disponibles en el rango: [" + available + "]."
+                    );
+                }
             }
 
-            Dispatch range = Dispatch.get(sheet, "UsedRange").toDispatch();
-            Dispatch.call(range, "AutoFilter", colIndex, criteria);
+            List<String> criteriaList = e.getValue();
+            if (criteriaList.size() == 1) {
+                Dispatch.call(dataRange, "AutoFilter",
+                        new Variant(fieldIndex),
+                        new Variant(criteriaList.get(0)));
+            } else {
+                Variant[] variants = new Variant[criteriaList.size()];
+                for (int i = 0; i < criteriaList.size(); i++) {
+                    variants[i] = new Variant(criteriaList.get(i));
+                }
+                Dispatch.callN(dataRange, "AutoFilter",
+                        new Object[]{ new Variant(fieldIndex), variants, new Variant(7) });
+            }
+        }
+
+    }
+
+    // ---------- Helpers ----------
+
+    private static class HeaderRange {
+        int row;
+        int startCol;
+        int endCol;
+        HeaderRange(int row, int startCol, int endCol) {
+            this.row = row; this.startCol = startCol; this.endCol = endCol;
+        }
+    }
+
+    private static HeaderRange parseHeaderRange(String range) {
+        if (range == null || range.trim().isEmpty())
+            throw new BotCommandException("Headers range no puede estar vacío.");
+
+        String r = range.trim().toUpperCase(Locale.ROOT).replace("$", "");
+        String[] parts = r.split(":");
+        if (parts.length == 1) {
+            CellRef c = parseCellRef(parts[0]);
+            return new HeaderRange(c.row, c.col, c.col);
+        } else if (parts.length == 2) {
+            CellRef a = parseCellRef(parts[0]);
+            CellRef b = parseCellRef(parts[1]);
+            if (a.row != b.row) {
+                throw new BotCommandException("Headers range debe estar en una única fila (ej.: C9:BM9).");
+            }
+            int start = Math.min(a.col, b.col);
+            int end   = Math.max(a.col, b.col);
+            return new HeaderRange(a.row, start, end);
+        } else {
+            throw new BotCommandException("Formato inválido para Headers range. Use ej.: C9 o C9:BM9.");
+        }
+    }
+
+    private static class CellRef {
+        int row; int col;
+        CellRef(int row, int col) { this.row = row; this.col = col; }
+    }
+
+    private static CellRef parseCellRef(String addr) {
+        if (addr == null || addr.isEmpty())
+            throw new BotCommandException("Referencia de celda vacía en el headers range.");
+
+        String s = addr.trim().toUpperCase(Locale.ROOT);
+        int i = 0, n = s.length();
+
+        StringBuilder colSb = new StringBuilder();
+        while (i < n && s.charAt(i) >= 'A' && s.charAt(i) <= 'Z') { colSb.append(s.charAt(i++)); }
+
+        StringBuilder rowSb = new StringBuilder();
+        while (i < n && Character.isDigit(s.charAt(i))) { rowSb.append(s.charAt(i++)); }
+
+        if (colSb.length() == 0 || rowSb.length() == 0 || i != n) {
+            throw new BotCommandException("Dirección inválida: '" + addr + "'. Ej.: C9 o C9:BM9");
+        }
+
+        int col = excelColumnLetterToNumber(colSb.toString());
+        int row = Integer.parseInt(rowSb.toString());
+        return new CellRef(row, col);
+    }
+
+    private static int getLastRow(Dispatch sheet) {
+        // xlCellTypeLastCell = 11
+        try {
+            Dispatch cells = Dispatch.get(sheet, "Cells").toDispatch();
+            Dispatch lastCell = Dispatch.call(cells, "SpecialCells", new Variant(11)).toDispatch();
+            return Dispatch.get(lastCell, "Row").getInt();
+        } catch (Exception ex) {
+            // Fallback a UsedRange si no hay SpecialCells disponibles
+            try {
+                Dispatch usedRange = Dispatch.get(sheet, "UsedRange").toDispatch();
+                int firstRow = Dispatch.get(usedRange, "Row").getInt();
+                int totalRows = Dispatch.get(Dispatch.get(usedRange, "Rows").toDispatch(), "Count").getInt();
+                return firstRow + totalRows - 1;
+            } catch (Exception ignored) {
+                return 1;
+            }
         }
     }
 
     private static int excelColumnLetterToNumber(String col) {
+        if (col == null) return -1;
+        String s = col.trim().toUpperCase(Locale.ROOT);
         int res = 0;
-        for (int i = 0; i < col.length(); i++) {
-            res = res * 26 + (col.charAt(i) - 'A' + 1);
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch < 'A' || ch > 'Z') {
+                throw new BotCommandException("Invalid column letter: '" + col + "'");
+            }
+            res = res * 26 + (ch - 'A' + 1);
         }
         return res;
+    }
+
+    private static String columnNumberToLetter(int col) {
+        StringBuilder sb = new StringBuilder();
+        int n = col;
+        while (n > 0) {
+            int rem = (n - 1) % 26;
+            sb.insert(0, (char)('A' + rem));
+            n = (n - 1) / 26;
+        }
+        return sb.toString();
     }
 
     private static String safeVariantToString(Variant v) {
@@ -189,4 +360,5 @@ public class FilterRows {
         Object o = v.toJavaObject();
         return o != null ? o.toString() : "";
     }
+
 }

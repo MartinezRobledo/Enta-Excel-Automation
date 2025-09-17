@@ -3,8 +3,8 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
+import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.GreaterThanEqualTo;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
@@ -64,9 +64,14 @@ public class GetHeadersRange {
             @Idx(index = "5", type = AttributeType.VARIABLE)
             @Pkg(label = "Select variable")
             @NotEmpty
-            Value<String> varOutput
+            Value<String> varOutput,
+
+            @Idx(index = "6", type = AttributeType.CHECKBOX)
+            @Pkg(label = "Allow discontinuous headers", description = "If checked, the range will continue even if some header cells are empty",
+            default_value_type = DataType.BOOLEAN, default_value = "false")
+            Boolean allowDiscontinuousHeaders
     ) {
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null)
             throw new BotCommandException("Session not found: " + sessionId);
 
@@ -105,24 +110,41 @@ public class GetHeadersRange {
         int headerRow = Dispatch.get(findResult, "Row").getInt();
         int foundCol = Dispatch.get(findResult, "Column").getInt();
 
-        // Expandir a izquierda hasta celda vacía (limitado por UsedRange)
+        // Expandir a izquierda hasta celda vacía (si no se permiten discontinuos)
         int startCol = foundCol;
         while (startCol - 1 >= usedFirstCol) {
             Dispatch leftCell = Dispatch.call(sheet, "Cells", headerRow, startCol - 1).toDispatch();
             Variant v = Dispatch.get(leftCell, "Value");
-            if (v.isNull() || v.toString().trim().isEmpty()) break;
+            if (!allowDiscontinuousHeaders && (v.isNull() || v.toString().trim().isEmpty())) break;
             startCol--;
         }
 
-        // Expandir a derecha hasta celda vacía (limitado por UsedRange)
+        // Expandir a derecha hasta celda vacía (si no se permiten discontinuos)
         int endCol = foundCol;
         while (endCol + 1 <= usedLastCol) {
             Dispatch rightCell = Dispatch.call(sheet, "Cells", headerRow, endCol + 1).toDispatch();
             Variant v = Dispatch.get(rightCell, "Value");
-            if (v.isNull() || v.toString().trim().isEmpty()) break;
+            if (!allowDiscontinuousHeaders && (v.isNull() || v.toString().trim().isEmpty())) break;
             endCol++;
         }
 
+        // Ajuste de borde: primera celda
+        while (startCol <= endCol) {
+            Dispatch firstCell = Dispatch.call(sheet, "Cells", headerRow, startCol).toDispatch();
+            Variant v = Dispatch.get(firstCell, "Value");
+            if (v != null && !v.isNull() && !v.toString().trim().isEmpty()) break;
+            startCol++;
+        }
+
+        // Ajuste de borde: última celda
+        while (endCol >= startCol) {
+            Dispatch lastCell = Dispatch.call(sheet, "Cells", headerRow, endCol).toDispatch();
+            Variant v = Dispatch.get(lastCell, "Value");
+            if (v != null && !v.isNull() && !v.toString().trim().isEmpty()) break;
+            endCol--;
+        }
+
+        // Construir rango final
         String startColLetter = getColumnLetter(startCol);
         String endColLetter = getColumnLetter(endCol);
         String range = startColLetter + headerRow + ":" + endColLetter + headerRow;
@@ -131,7 +153,7 @@ public class GetHeadersRange {
         return new StringValue(range);
     }
 
-    private String getColumnLetter(int columnNumber) {
+        private String getColumnLetter(int columnNumber) {
         StringBuilder sb = new StringBuilder();
         while (columnNumber > 0) {
             int rem = (columnNumber - 1) % 26;

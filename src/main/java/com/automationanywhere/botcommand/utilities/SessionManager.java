@@ -3,25 +3,25 @@ package com.automationanywhere.botcommand.utilities;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
-public class ExcelSessionManager {
-    private static final Map<String, ExcelSession> sessions = new ConcurrentHashMap<>();
+public class SessionManager {
+    private static final Map<String, Session> sessions = new ConcurrentHashMap<>();
 
-    public static void addSession(String sessionId, ExcelSession session) {
+    public static void addSession(String sessionId, Session session) {
         sessions.put(sessionId, session);
     }
 
-    public static ExcelSession getSession(String sessionId) {
+    public static Session getSession(String sessionId) {
         return sessions.get(sessionId);
     }
 
     public static void removeSession(String sessionId) {
-        ExcelSession session = sessions.remove(sessionId);
+        Session session = sessions.remove(sessionId);
         if (session != null && session.excelApp != null) {
             session.excelApp.invoke("Quit");
         }
     }
 
-    public static Map<String, ExcelSession> getSessions() {
+    public static Map<String, Session> getSessions() {
         return sessions;
     }
 

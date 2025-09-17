@@ -1,8 +1,8 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
+import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.GreaterThanEqualTo;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
@@ -15,12 +15,12 @@ import com.jacob.com.Variant;
 
 @BotCommand
 @CommandPkg(
-        label = "Insert Formula",
-        name = "insertFormula",
-        description = "Inserta una fórmula en una celda o en toda una columna",
+        label = "Insert Value",
+        name = "insertValue",
+        description = "Inserta un valor o fórmula en una celda, columna o rango",
         icon = "excel.svg"
 )
-public class InsertFormula {
+public class InsertValue {
 
     @Execute
     public void action(
@@ -38,63 +38,90 @@ public class InsertFormula {
                     @Idx.Option(index = "3.1", pkg = @Pkg(label = "Name", value = "name")),
                     @Idx.Option(index = "3.2", pkg = @Pkg(label = "Index", value = "index"))
             })
-            @Pkg(label = "Select origin sheet by", default_value = "name", default_value_type = DataType.STRING)
+            @Pkg(label = "Select sheet by", default_value = "name", default_value_type = DataType.STRING)
             @SelectModes
             String selectSheetBy,
 
             @Idx(index = "3.1.1", type = AttributeType.TEXT)
-            @Pkg(label = "Origin Sheet Name")
+            @Pkg(label = "Sheet Name")
             @NotEmpty
             String sheetName,
 
             @Idx(index = "3.2.1", type = AttributeType.NUMBER)
-            @Pkg(label = "Origin Sheet Index (1-based)")
+            @Pkg(label = "Sheet Index (1-based)")
             @NumberInteger
             @GreaterThanEqualTo("1")
             @NotEmpty
             Double sheetIndex,
 
             @Idx(index = "4", type = AttributeType.TEXT)
-            @Pkg(label = "Formula")
+            @Pkg(label = "Value or Formula")
             @NotEmpty
-            String formula,
+            String value,
 
-            @Idx(index = "5", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "5.1", pkg = @Pkg(label = "Celda", value = "cell")),
-                    @Idx.Option(index = "5.2", pkg = @Pkg(label = "Columna", value = "column"))
+            @Idx(index = "5", type = AttributeType.CHECKBOX)
+            @Pkg(label = "Is Formula?", default_value_type = DataType.BOOLEAN, default_value = "false")
+            Boolean isFormula,
+
+            @Idx(index = "6", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "6.1", pkg = @Pkg(label = "Celda", value = "cell")),
+                    @Idx.Option(index = "6.2", pkg = @Pkg(label = "Columna", value = "column")),
+                    @Idx.Option(index = "6.3", pkg = @Pkg(label = "Rango", value = "range"))
             })
             @Pkg(label = "Insert Mode", default_value = "cell", default_value_type = DataType.STRING)
             String insertMode,
 
-            @Idx(index = "5.1.1", type = AttributeType.TEXT)
+            @Idx(index = "6.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Target Cell (ej A1)")
             @NotEmpty
             String targetCell,
 
-            @Idx(index = "5.2.1", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "5.2.1.1", pkg = @Pkg(label = "Header", value = "header")),
-                    @Idx.Option(index = "5.2.1.2", pkg = @Pkg(label = "Letter", value = "letter"))
+            @Idx(index = "6.2.1", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "6.2.1.1", pkg = @Pkg(label = "Header", value = "header")),
+                    @Idx.Option(index = "6.2.1.2", pkg = @Pkg(label = "Letter", value = "letter"))
             })
             @Pkg(label = "Select Column By", default_value = "letter", default_value_type = DataType.STRING)
             @SelectModes
             String selectColumnBy,
 
-            @Idx(index = "5.2.1.1.1", type = AttributeType.TEXT)
+            @Idx(index = "6.2.1.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Column Header Name")
             @NotEmpty
             String columnName,
 
-            @Idx(index = "5.2.1.2.1", type = AttributeType.TEXT)
+            @Idx(index = "6.2.1.2.1", type = AttributeType.TEXT)
             @Pkg(label = "Column Letter (A, B, ...)")
             @NotEmpty
             String columnLetter,
 
-            @Idx(index = "5.2.1.1.2", type = AttributeType.CHECKBOX)
-            @Pkg(label = "Trim header", default_value = "true", default_value_type = DataType.BOOLEAN)
-            Boolean trimHeader
+            @Idx(index = "6.2.2", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "6.2.2.1", pkg = @Pkg(label = "In Column", value = "inColumn")),
+                    @Idx.Option(index = "6.2.2.2", pkg = @Pkg(label = "End of Column", value = "endColumn"))
+            })
+            @Pkg(label = "Select Mode By", default_value = "inColumn", default_value_type = DataType.STRING)
+            @SelectModes
+            String selectColModeBy,
+
+            @Idx(index = "6.2.2.1.1", type = AttributeType.NUMBER)
+            @Pkg(label = "Start Row (for column insert)", default_value = "2", default_value_type = DataType.NUMBER)
+            @NumberInteger
+            @GreaterThanEqualTo("1")
+            Double startRowInput,
+
+            @Idx(index = "6.2.2.2.1", type = AttributeType.NUMBER)
+            @Pkg(label = "Margin top (in rows)", default_value = "0", default_value_type = DataType.NUMBER)
+            @NumberInteger
+            @GreaterThanEqualTo("0")
+            @NotEmpty
+            Double marginTopRows,
+
+            @Idx(index = "6.3.1", type = AttributeType.TEXT)
+            @Pkg(label = "Target range (ej A1:F12)")
+            @NotEmpty
+            String targetRange
     ) {
 
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null)
             throw new BotCommandException("Session not found: " + sessionId);
 
@@ -112,7 +139,11 @@ public class InsertFormula {
 
         if ("cell".equalsIgnoreCase(insertMode)) {
             Dispatch cell = Dispatch.call(sheet, "Range", targetCell).toDispatch();
-            Dispatch.put(cell, "Formula", formula);
+            if (Boolean.TRUE.equals(isFormula)) {
+                Dispatch.put(cell, "Formula", value);
+            } else {
+                Dispatch.put(cell, "Value", value);
+            }
 
         } else if ("column".equalsIgnoreCase(insertMode)) {
 
@@ -130,12 +161,11 @@ public class InsertFormula {
                 if (columnName == null || columnName.isEmpty())
                     throw new BotCommandException("Column header not provided.");
                 colIndex = -1;
-                String headerTarget = trimHeader && columnName != null ? columnName.trim() : columnName;
+                String headerTarget = columnName.trim();
                 for (int c = 1; c <= totalCols; c++) {
                     Dispatch cell = Dispatch.call(sheet, "Cells", firstRow, c).toDispatch();
                     String val = safeVariantToString(Dispatch.get(cell, "Value"));
-                    if (trimHeader && val != null) val = val.trim();
-                    if (headerTarget.equalsIgnoreCase(val)) {
+                    if (val != null && val.trim().equalsIgnoreCase(headerTarget)) {
                         colIndex = c;
                         break;
                     }
@@ -143,27 +173,48 @@ public class InsertFormula {
                 if (colIndex == -1) throw new BotCommandException("Header not found: " + headerTarget);
             }
 
-            // Inserto la fórmula en la primera celda vacía de la columna
-            int startRow = firstRow + 1;
-            for (int r = firstRow + 1; r <= totalRows; r++) {
-                Dispatch cell = Dispatch.call(sheet, "Cells", r, colIndex).toDispatch();
-                String val = safeVariantToString(Dispatch.get(cell, "Value"));
-                if (val == null || val.isEmpty()) {
-                    startRow = r;
-                    Dispatch firstCell = Dispatch.call(sheet, "Cells", startRow, colIndex).toDispatch();
-                    Dispatch.put(firstCell, "Formula", formula);
+            if ("inColumn".equalsIgnoreCase(selectColModeBy)) {
+                // Insertar desde una fila fija hacia abajo
+                int startRow = startRowInput != null ? startRowInput.intValue() : firstRow + 1;
 
-                    // Determinar rango final de autofill
-                    Dispatch lastCell = Dispatch.call(sheet, "Cells", totalRows, colIndex).toDispatch();
-                    Dispatch fillRange = Dispatch.call(sheet, "Range", firstCell, lastCell).toDispatch();
+                for (int r = startRow; r <= totalRows; r++) {
+                    Dispatch cell = Dispatch.call(sheet, "Cells", r, colIndex).toDispatch();
+                    if (Boolean.TRUE.equals(isFormula)) {
+                        Dispatch.put(cell, "Formula", value);
+                    } else {
+                        Dispatch.put(cell, "Value", value);
+                    }
+                }
 
-                    // Usar AutoFill para replicar la fórmula con referencias relativas
-                    Dispatch.call(firstCell, "AutoFill", fillRange, 1 /* xlFillDefault */);
-                    break;
+            } else if ("endColumn".equalsIgnoreCase(selectColModeBy)) {
+                // Buscar la última fila con datos en esa columna
+                int lastDataRow = firstRow;
+                for (int r = firstRow; r <= totalRows; r++) {
+                    Dispatch cell = Dispatch.call(sheet, "Cells", r, colIndex).toDispatch();
+                    String val = safeVariantToString(Dispatch.get(cell, "Value"));
+                    if (val != null && !val.isEmpty()) {
+                        lastDataRow = r;
+                    }
+                }
+
+                int targetRow = lastDataRow + (marginTopRows != 0 ? marginTopRows.intValue() + 1 : 1);
+
+                Dispatch cell = Dispatch.call(sheet, "Cells", targetRow, colIndex).toDispatch();
+                if (Boolean.TRUE.equals(isFormula)) {
+                    Dispatch.put(cell, "Formula", value);
+                } else {
+                    Dispatch.put(cell, "Value", value);
                 }
             }
 
-    } else {
+        } else if ("range".equalsIgnoreCase(insertMode)) {
+            Dispatch range = Dispatch.call(sheet, "Range", targetRange).toDispatch();
+            if (Boolean.TRUE.equals(isFormula)) {
+                Dispatch.put(range, "Formula", value);
+            } else {
+                Dispatch.put(range, "Value", value);
+            }
+        } else {
             throw new BotCommandException("Invalid insert mode: " + insertMode);
         }
     }

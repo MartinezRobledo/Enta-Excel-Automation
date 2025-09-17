@@ -1,8 +1,10 @@
 package com.automationanywhere.botcommand.actions;
 
+import com.automationanywhere.botcommand.data.Value;
+import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ExcelSessionManager;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
+import com.automationanywhere.botcommand.utilities.SessionManager;
+import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
 import com.automationanywhere.commandsdk.model.AttributeType;
@@ -16,12 +18,15 @@ import java.io.File;
         label = "Open Excel Workbook",
         name = "openWorkbook",
         description = "Opens an Excel workbook in an existing COM session",
-        icon = "excel.svg"
+        icon = "excel.svg",
+        return_type = DataType.STRING,
+        return_label = "Workbook Name",
+        return_description = "The full name of the workbook as Excel recognizes it"
 )
 public class OpenWorkbook {
 
     @Execute
-    public void action(
+    public Value<String> action(
             @Idx(index = "1", type = AttributeType.FILE)
             @Pkg(label = "Workbook Path", description = "Full path to the Excel workbook")
             @NotEmpty
@@ -37,7 +42,7 @@ public class OpenWorkbook {
             String sessionId
     ) {
 
-        ExcelSession session = ExcelSessionManager.getSession(sessionId);
+        Session session = SessionManager.getSession(sessionId);
         if (session == null || session.excelApp == null) {
             throw new BotCommandException("Session not found: " + sessionId);
         }
@@ -48,34 +53,54 @@ public class OpenWorkbook {
         }
 
         Dispatch workbooks = session.excelApp.getProperty("Workbooks").toDispatch();
+        Dispatch wb = null;
 
-        // ✅ Si ya lo tenemos en openWorkbooks, simplemente terminamos
-        if (session.openWorkbooks.containsKey(workbookPath)) {
-            session.excelApp.setProperty("Visible", Boolean.TRUE.equals(visible));
-            return;
-        }
-
-        // ✅ Buscar si está abierto en Excel
-        int count = Dispatch.get(workbooks, "Count").getInt();
-        for (int i = 1; i <= count; i++) {
-            Dispatch wb = Dispatch.call(workbooks, "Item", i).toDispatch();
-            String fullName = Dispatch.get(wb, "FullName").getString();
+        // Buscar si ya está en la sesión
+        for (Dispatch existingWb : session.openWorkbooks.values()) {
+            String fullName = Dispatch.get(existingWb, "FullName").getString();
             if (fullName.equalsIgnoreCase(workbookPath)) {
-                // ✅ Adjuntar el workbook existente en la sesión
-                session.openWorkbooks.put(workbookPath, wb);
-                session.excelApp.setProperty("Visible", Boolean.TRUE.equals(visible));
-                return;
+                wb = existingWb;
+                break;
             }
         }
 
-        // ✅ Si no está abierto, lo abrimos
-        try {
-            Dispatch wb = Dispatch.call(workbooks, "Open", workbookPath).toDispatch();
-            session.excelApp.setProperty("Visible", Boolean.TRUE.equals(visible));
-            session.openWorkbooks.put(workbookPath, wb);
-        } catch (Exception e) {
-            throw new BotCommandException("Failed to open workbook: " + e.getMessage());
+        // Buscar si ya está abierto en Excel
+        if (wb == null) {
+            int count = Dispatch.get(workbooks, "Count").getInt();
+            for (int i = 1; i <= count; i++) {
+                Dispatch existingWb = Dispatch.call(workbooks, "Item", i).toDispatch();
+                String fullName = Dispatch.get(existingWb, "FullName").getString();
+                if (fullName.equalsIgnoreCase(workbookPath)) {
+                    wb = existingWb;
+                    break;
+                }
+            }
         }
-    }
 
+        // Si no está abierto, abrirlo con reintentos
+        if (wb == null) {
+            wb = Dispatch.call(workbooks, "Open", workbookPath).toDispatch();
+
+            int retries = 960; // máx 480 segundos
+            while (retries-- > 0) {
+                try {
+                    String fullName = Dispatch.get(wb, "FullName").getString();
+                    if (fullName != null && !fullName.isEmpty()) {
+                        break;
+                    }
+                } catch (Exception ignored) {}
+                try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+            }
+        }
+
+        // FullName de Excel como clave
+        String fullName = Dispatch.get(wb, "FullName").getString();
+        session.openWorkbooks.put(fullName, wb);
+
+        // Ajustar visibilidad
+        session.excelApp.setProperty("Visible", Boolean.TRUE.equals(visible));
+
+        // WorkbookName para usar en otras acciones
+        return new StringValue(fullName);
+    }
 }
