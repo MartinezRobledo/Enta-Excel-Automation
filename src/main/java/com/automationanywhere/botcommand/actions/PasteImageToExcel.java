@@ -1,10 +1,12 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
+import com.automationanywhere.commandsdk.annotations.rules.SessionObject;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
@@ -23,53 +25,45 @@ public class PasteImageToExcel {
 
     @Execute
     public void action(
-            @Idx(index = "1", type = AttributeType.TEXT)
-            @Pkg(label = "Session ID", default_value_type = DataType.STRING, default_value = "Default")
+            @Idx(index = "1", type = AttributeType.SESSION)
+            @Pkg(label = "Workbook Session")
             @NotEmpty
-            String sessionId,
+            @SessionObject
+            ExcelSession excelSession,
 
             @Idx(index = "2", type = AttributeType.TEXT)
-            @Pkg(label = "Workbook Path")
-            @NotEmpty
-            String workbookName,
-
-            @Idx(index = "3", type = AttributeType.TEXT)
             @Pkg(label = "Sheet Name")
             @NotEmpty
             String sheetName,
 
-            @Idx(index = "4", type = AttributeType.FILE)
+            @Idx(index = "3", type = AttributeType.FILE)
             @Pkg(label = "Image File Path")
             @NotEmpty
             String imagePath,
 
-            @Idx(index = "5", type = AttributeType.TEXT)
+            @Idx(index = "4", type = AttributeType.TEXT)
             @Pkg(label = "Start Cell (e.g., B2)", default_value = "A1", default_value_type = DataType.STRING)
             @NotEmpty
             String startCell,
 
-            @Idx(index = "6", type = AttributeType.NUMBER)
+            @Idx(index = "5", type = AttributeType.NUMBER)
             @Pkg(label = "Width in cells", default_value = "3", default_value_type = DataType.NUMBER)
             @NotEmpty
             Double widthCells,
 
-            @Idx(index = "7", type = AttributeType.NUMBER)
+            @Idx(index = "6", type = AttributeType.NUMBER)
             @Pkg(label = "Height in cells", default_value = "4", default_value_type = DataType.NUMBER)
             @NotEmpty
             Double heightCells
     ) {
+        Session session = excelSession.getSession();
+        if (session == null || session.excelApp == null)
+            throw new BotCommandException("Session not found o closed");
 
-        Session session = SessionManager.getSession(sessionId);
-        if (session == null || session.excelApp == null) {
-            throw new BotCommandException("Excel session not found: " + sessionId);
-        }
+        if (session.openWorkbooks.isEmpty())
+            throw new BotCommandException("No workbook is open in this session.");
 
-        if (imagePath == null || !new File(imagePath).exists()) {
-            throw new BotCommandException("Image file not found: " + imagePath);
-        }
-
-        Dispatch wb = session.openWorkbooks.get(workbookName);
-        if (wb == null) throw new BotCommandException("Workbook not open: " + workbookName);
+        Dispatch wb = session.openWorkbooks.values().iterator().next();
 
         Dispatch sheet = Dispatch.call(Dispatch.get(wb, "Sheets").toDispatch(), "Item", sheetName).toDispatch();
         Dispatch range = Dispatch.call(sheet, "Range", startCell).toDispatch();

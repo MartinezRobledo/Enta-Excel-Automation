@@ -2,6 +2,7 @@ package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.commandsdk.annotations.*;
@@ -32,54 +33,52 @@ import java.util.stream.Collectors;
 )
 public class ValidateExcel {
 
-    @Idx(index = "6.3", type = AttributeType.TEXT, name = "SheetValues")
+    @Idx(index = "5.3", type = AttributeType.TEXT, name = "SheetValues")
     @Pkg(label = "Sheet", default_value_type = DataType.STRING)
     @NotEmpty
     private String entrySheetValues;
 
-    @Idx(index = "6.4", type = AttributeType.TEXT, name = "Headers")
+    @Idx(index = "5.4", type = AttributeType.TEXT, name = "Headers")
     @Pkg(label = "Headers", default_value_type = DataType.STRING)
     @NotEmpty
     private String entryHeadersValues;
 
-    @Idx(index = "7.3", type = AttributeType.TEXT, name = "SheetRanges")
+    @Idx(index = "6.3", type = AttributeType.TEXT, name = "SheetRanges")
     @Pkg(label = "Sheet", default_value_type = DataType.STRING)
     @NotEmpty
     private String entrySheetRanges;
 
-    @Idx(index = "7.4", type = AttributeType.TEXT, name = "Range")
+    @Idx(index = "6.4", type = AttributeType.TEXT, name = "Range")
     @Pkg(label = "Range", default_value_type = DataType.STRING)
     @NotEmpty
     private String entryHeadersRange;
 
     @Execute
     public Value<String> action(
-            @Idx(index = "1", type = AttributeType.TEXT)
-            @Pkg(label = "Session ID", default_value_type = DataType.STRING, default_value = "Default")
-            @NotEmpty String sessionId,
+            @Idx(index = "1", type = AttributeType.SESSION)
+            @Pkg(label = "Workbook Session")
+            @NotEmpty
+            @SessionObject
+            ExcelSession excelSession,
 
-            @Idx(index = "2", type = AttributeType.TEXT)
-            @Pkg(label = "Workbook Name")
-            @NotEmpty String workbookName,
-
-            @Idx(index = "3", type = AttributeType.NUMBER)
+            @Idx(index = "2", type = AttributeType.NUMBER)
             @Pkg(label = "Expected number of sheets (optional)")
             Double expectedSheetCount,
 
-            @Idx(index = "4", type = AttributeType.LIST)
+            @Idx(index = "3", type = AttributeType.LIST)
             @Pkg(label = "Expected sheet names (optional)")
             List<Object> expectedSheetNames,
 
-            @Idx(index = "5", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "5.1", pkg = @Pkg(label = "Por index (1,2,3...)", value = "index")),
-                    @Idx.Option(index = "5.2", pkg = @Pkg(label = "Por nombre de hoja", value = "sheet"))
+            @Idx(index = "4", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "4.1", pkg = @Pkg(label = "Por index (1,2,3...)", value = "index")),
+                    @Idx.Option(index = "4.2", pkg = @Pkg(label = "Por nombre de hoja", value = "sheet"))
             })
             @Pkg(label = "Referencia de hoja", default_value = "index", default_value_type = DataType.STRING)
             String referenceMode,
 
-            @Idx(index = "6", type = AttributeType.ENTRYLIST, options = {
-                    @Idx.Option(index = "6.1", pkg = @Pkg(title = "SheetValues", label = "Sheet")),
-                    @Idx.Option(index = "6.2", pkg = @Pkg(title = "Headers", label = "Headers (comma-separated)"))
+            @Idx(index = "5", type = AttributeType.ENTRYLIST, options = {
+                    @Idx.Option(index = "5.1", pkg = @Pkg(title = "SheetValues", label = "Sheet")),
+                    @Idx.Option(index = "5.2", pkg = @Pkg(title = "Headers", label = "Headers (comma-separated)"))
             })
             @Pkg(label = "Provide sheets and expected headers")
             @EntryListLabel(value = "Provide entry")
@@ -88,9 +87,9 @@ public class ValidateExcel {
             @EntryListEmptyLabel(value = "No sheets added")
             List<Value> sheetHeadersEntryList,
 
-            @Idx(index = "7", type = AttributeType.ENTRYLIST, options = {
-                    @Idx.Option(index = "7.1", pkg = @Pkg(title = "SheetRanges", label = "Sheet")),
-                    @Idx.Option(index = "7.2", pkg = @Pkg(title = "Range", label = "Range of headers"))
+            @Idx(index = "6", type = AttributeType.ENTRYLIST, options = {
+                    @Idx.Option(index = "6.1", pkg = @Pkg(title = "SheetRanges", label = "Sheet")),
+                    @Idx.Option(index = "6.2", pkg = @Pkg(title = "Range", label = "Range of headers"))
             })
             @Pkg(label = "Provide sheets and header ranges")
             @EntryListLabel(value = "Provide entry")
@@ -99,7 +98,7 @@ public class ValidateExcel {
             @EntryListEmptyLabel(value = "No sheets added")
             List<Value> sheetRangesEntryList,
 
-            @Idx(index = "8", type = AttributeType.CHECKBOX)
+            @Idx(index = "7", type = AttributeType.CHECKBOX)
             @Pkg(label = "Headers are discontinuous", description = "Check if there are empty columns between headers",
                     default_value_type = DataType.BOOLEAN, default_value = "false")
             Boolean allowDiscontinuousHeaders
@@ -107,17 +106,14 @@ public class ValidateExcel {
         // Este String se retorna al final. Si queda vacío => válido.
         String errorMessage = "";
 
-        Session session = SessionManager.getSession(sessionId);
-        if (session == null || session.excelApp == null) {
-            errorMessage = "Session not found: " + sessionId;
-            return new StringValue(errorMessage);
-        }
+        Session session = excelSession.getSession();
+        if (session == null || session.excelApp == null)
+            throw new BotCommandException("Session not found o closed");
 
-        Dispatch wb = session.openWorkbooks.get(workbookName);
-        if (wb == null) {
-            errorMessage = "Workbook not open: " + workbookName;
-            return new StringValue(errorMessage);
-        }
+        if (session.openWorkbooks.isEmpty())
+            throw new BotCommandException("No workbook is open in this session.");
+
+        Dispatch wb = session.openWorkbooks.values().iterator().next();
 
         try {
             Dispatch sheets = Dispatch.get(wb, "Sheets").toDispatch();

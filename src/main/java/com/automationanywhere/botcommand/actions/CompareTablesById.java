@@ -5,13 +5,11 @@ import com.automationanywhere.botcommand.data.impl.BooleanValue;
 import com.automationanywhere.botcommand.data.impl.DictionaryValue;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
-import com.automationanywhere.commandsdk.annotations.rules.GreaterThanEqualTo;
-import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
-import com.automationanywhere.commandsdk.annotations.rules.NumberInteger;
-import com.automationanywhere.commandsdk.annotations.rules.SelectModes;
+import com.automationanywhere.commandsdk.annotations.rules.*;
 import com.automationanywhere.commandsdk.model.*;
 import com.jacob.com.Dispatch;
 import com.jacob.com.Variant;
@@ -30,86 +28,93 @@ import java.util.*;
 )
 public class CompareTablesById {
 
-
     // Constantes Excel
     private static final int XL_CELL_TYPE_VISIBLE = 12; // xlCellTypeVisible
 
 
     @Execute
     public DictionaryValue action(
-            @Idx(index = "1", type = AttributeType.TEXT)
-            @Pkg(label = "Session ID", default_value_type = DataType.STRING, default_value = "Default")
-            @NotEmpty String sessionId,
+            @Idx(index = "1", type = AttributeType.SESSION)
+            @Pkg(label = "Source Workbook Session")
+            @NotEmpty
+            @SessionObject
+            ExcelSession sourceExcelSession,
 
-            @Idx(index = "2", type = AttributeType.TEXT)
-            @Pkg(label = "Source Workbook")
-            @NotEmpty String workbook1,
+            @Idx(index = "2", type = AttributeType.SESSION)
+            @Pkg(label = "Destination Workbook Session")
+            @NotEmpty
+            @SessionObject
+            ExcelSession destExcelSession,
 
-            @Idx(index = "3", type = AttributeType.TEXT)
-            @Pkg(label = "Destination Workbook")
-            @NotEmpty String workbook2,
-
-            @Idx(index = "4", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "4.1", pkg = @Pkg(label = "Name", value = "name")),
-                    @Idx.Option(index = "4.2", pkg = @Pkg(label = "Index", value = "index"))
+            @Idx(index = "3", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "3.1", pkg = @Pkg(label = "Name", value = "name")),
+                    @Idx.Option(index = "3.2", pkg = @Pkg(label = "Index", value = "index"))
             })
             @Pkg(label = "Select origin sheet by", default_value = "name", default_value_type = DataType.STRING)
             @SelectModes
             String selectOriginSheetBy,
 
-            @Idx(index = "4.1.1", type = AttributeType.TEXT)
+            @Idx(index = "3.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Origin Sheet Name")
             @NotEmpty
             String originSheetName,
 
-            @Idx(index = "4.2.1", type = AttributeType.NUMBER)
+            @Idx(index = "3.2.1", type = AttributeType.NUMBER)
             @Pkg(label = "Origin Sheet Index (1-based)")
             @NumberInteger
             @GreaterThanEqualTo("1")
             @NotEmpty
             Double originSheetIndex,
 
-            @Idx(index = "5", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "5.1", pkg = @Pkg(label = "Name", value = "name")),
-                    @Idx.Option(index = "5.2", pkg = @Pkg(label = "Index", value = "index"))
+            @Idx(index = "4", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "4.1", pkg = @Pkg(label = "Name", value = "name")),
+                    @Idx.Option(index = "4.2", pkg = @Pkg(label = "Index", value = "index"))
             })
             @Pkg(label = "Select destination sheet by", default_value = "name", default_value_type = DataType.STRING)
             @SelectModes
             String selectDestSheetBy,
 
-            @Idx(index = "5.1.1", type = AttributeType.TEXT)
+            @Idx(index = "4.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Destination Sheet Name")
             @NotEmpty
             String destSheetName,
 
-            @Idx(index = "5.2.1", type = AttributeType.NUMBER)
+            @Idx(index = "4.2.1", type = AttributeType.NUMBER)
             @Pkg(label = "Destination Sheet Index (1-based)")
             @NumberInteger
             @GreaterThanEqualTo("1")
             @NotEmpty
             Double destSheetIndex,
 
-            @Idx(index = "6", type = AttributeType.TEXT)
+            @Idx(index = "5", type = AttributeType.TEXT)
             @Pkg(label = "ID Column Table 1")
             @NotEmpty String idCol1,
 
-            @Idx(index = "7", type = AttributeType.TEXT)
+            @Idx(index = "6", type = AttributeType.TEXT)
             @Pkg(label = "ID Column Table 2")
             @NotEmpty String idCol2
     ) {
-
         Map<String, Value> result = new HashMap<>();
 
         try {
             // ==== Sesión y workbooks ====
-            Session session = SessionManager.getSession(sessionId);
-            if (session == null || session.excelApp == null)
-                throw new BotCommandException("Excel session not found: " + sessionId);
+            Session sourceSession = sourceExcelSession.getSession();
+            if (sourceSession == null || sourceSession.excelApp == null)
+                throw new BotCommandException("Source Session not found o closed");
 
-            Dispatch wb1 = session.openWorkbooks.get(workbook1);
-            Dispatch wb2 = session.openWorkbooks.get(workbook2);
-            if (wb1 == null || wb2 == null)
-                throw new BotCommandException("Workbooks not open");
+            if (sourceSession.openWorkbooks.isEmpty())
+                throw new BotCommandException("Source workbook: No workbook is open in this session.");
+
+            Dispatch wb1 = sourceSession.openWorkbooks.values().iterator().next();
+
+            Session destSession = destExcelSession.getSession();
+            if (destSession == null || destSession.excelApp == null)
+                throw new BotCommandException("Destination Session not found o closed");
+
+            if (sourceSession.openWorkbooks.isEmpty())
+                throw new BotCommandException("Destination workbook: No workbook is open in this session.");
+
+            Dispatch wb2 = destSession.openWorkbooks.values().iterator().next();
 
             // ==== Hojas ====
             Dispatch sheet1 = selectOriginSheetBy.equals("name")

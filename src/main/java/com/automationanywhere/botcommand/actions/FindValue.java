@@ -3,10 +3,12 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
+import com.automationanywhere.commandsdk.annotations.rules.SessionObject;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
@@ -29,76 +31,75 @@ public class FindValue {
 
     @Execute
     public Value action(
-            @Idx(index = "1", type = AttributeType.TEXT)
-            @Pkg(label = "Session ID", default_value_type = DataType.STRING, default_value = "Default")
-            String sessionId,
+            @Idx(index = "1", type = AttributeType.SESSION)
+            @Pkg(label = "Workbook Session")
+            @NotEmpty
+            @SessionObject
+            ExcelSession excelSession,
 
-            @Idx(index = "2", type = AttributeType.TEXT)
-            @Pkg(label = "Workbook Path")
-            String workbookName,
-
-            @Idx(index = "3", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "3.1", pkg = @Pkg(label = "Name", value = "name")),
-                    @Idx.Option(index = "3.2", pkg = @Pkg(label = "Index", value = "index"))
+            @Idx(index = "2", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "2.1", pkg = @Pkg(label = "Name", value = "name")),
+                    @Idx.Option(index = "2.2", pkg = @Pkg(label = "Index", value = "index"))
             })
             @Pkg(label = "Select sheet by", default_value = "name", default_value_type = DataType.STRING)
             String selectSheetBy,
 
-            @Idx(index = "3.1.1", type = AttributeType.TEXT)
+            @Idx(index = "2.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Sheet Name")
             @NotEmpty
             String sheetName,
 
-            @Idx(index = "3.2.1", type = AttributeType.NUMBER)
+            @Idx(index = "2.2.1", type = AttributeType.NUMBER)
             @Pkg(label = "Sheet Index (1-based)")
             @NotEmpty
             Double sheetIndex,
 
-            @Idx(index = "4", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "4.1", pkg = @Pkg(label = "Standard", value = "standard")),
-                    @Idx.Option(index = "4.2", pkg = @Pkg(label = "Regex", value = "regex"))
+            @Idx(index = "3", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "3.1", pkg = @Pkg(label = "Standard", value = "standard")),
+                    @Idx.Option(index = "3.2", pkg = @Pkg(label = "Regex", value = "regex"))
             })
             @Pkg(label = "Search Mode", default_value = "standard", default_value_type = DataType.STRING)
             String searchMode,
 
             // --- STANDARD MODE ---
-            @Idx(index = "4.1.1", type = AttributeType.TEXT)
+            @Idx(index = "3.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Value to search")
             String valueToSearch,
 
-            @Idx(index = "4.1.2", type = AttributeType.CHECKBOX)
+            @Idx(index = "3.1.2", type = AttributeType.CHECKBOX)
             @Pkg(label = "Case sensitive", default_value = "false", default_value_type = DataType.BOOLEAN)
             Boolean caseSensitive,
 
-            @Idx(index = "4.1.3", type = AttributeType.CHECKBOX)
+            @Idx(index = "3.1.3", type = AttributeType.CHECKBOX)
             @Pkg(label = "Use wildcard (*, ?)", default_value = "false", default_value_type = DataType.BOOLEAN)
             Boolean useWildcard,
 
-            @Idx(index = "4.1.4", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "4.1.4.1", pkg = @Pkg(label = "By Rows", value = "rows")),
-                    @Idx.Option(index = "4.1.4.2", pkg = @Pkg(label = "By Columns", value = "columns"))
+            @Idx(index = "3.1.4", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "3.1.4.1", pkg = @Pkg(label = "By Rows", value = "rows")),
+                    @Idx.Option(index = "3.1.4.2", pkg = @Pkg(label = "By Columns", value = "columns"))
             })
             @Pkg(label = "Search order", default_value = "rows", default_value_type = DataType.STRING)
             String searchOrder,
 
             // --- REGEX MODE ---
-            @Idx(index = "4.2.1", type = AttributeType.TEXT)
+            @Idx(index = "3.2.1", type = AttributeType.TEXT)
             @Pkg(label = "Regex Pattern")
             String regexPattern,
 
             // --- END UI ---
-            @Idx(index = "5", type = AttributeType.CHECKBOX)
+            @Idx(index = "4", type = AttributeType.CHECKBOX)
             @Pkg(label = "Absolute address", default_value_type = DataType.BOOLEAN, default_value = "true")
             Boolean absolute
     ) {
 
-        Session session = SessionManager.getSession(sessionId);
+        Session session = excelSession.getSession();
         if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found: " + sessionId);
+            throw new BotCommandException("Session not found o closed");
 
-        Dispatch wb = session.openWorkbooks.get(workbookName);
-        if (wb == null)
-            throw new BotCommandException("Workbook not open: " + workbookName);
+        if (session.openWorkbooks.isEmpty())
+            throw new BotCommandException("No workbook is open in this session.");
+
+        Dispatch wb = session.openWorkbooks.values().iterator().next();
 
         Dispatch sheets = Dispatch.get(wb, "Sheets").toDispatch();
         Dispatch sheet;

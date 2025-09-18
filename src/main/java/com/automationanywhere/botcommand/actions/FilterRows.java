@@ -5,6 +5,7 @@ import java.util.stream.Collectors;
 
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
@@ -14,6 +15,7 @@ import com.automationanywhere.commandsdk.annotations.rules.EntryList.EntryListEn
 import com.automationanywhere.commandsdk.annotations.rules.EntryList.EntryListLabel;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
 import com.automationanywhere.commandsdk.annotations.rules.SelectModes;
+import com.automationanywhere.commandsdk.annotations.rules.SessionObject;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
@@ -34,70 +36,65 @@ import com.jacob.com.Variant;
 )
 public class FilterRows {
 
-    @Idx(index = "5.3", type = AttributeType.TEXT, name = "Column")
+    @Idx(index = "4.3", type = AttributeType.TEXT, name = "Column")
     @Pkg(label = "Column", default_value_type = DataType.STRING)
     @NotEmpty
     private String entryColumn;
 
-    @Idx(index = "5.4", type = AttributeType.TEXT, name = "Criteria")
+    @Idx(index = "4.4", type = AttributeType.TEXT, name = "Criteria")
     @Pkg(label = "Criteria", default_value_type = DataType.STRING)
     @NotEmpty
     private String entryCriteria;
 
     @Execute
     public void action(
-            @Idx(index = "1", type = AttributeType.TEXT)
-            @Pkg(label = "Session ID", default_value_type = DataType.STRING, default_value = "Default")
+            @Idx(index = "1", type = AttributeType.SESSION)
+            @Pkg(label = "Workbook Session")
             @NotEmpty
-            String sessionId,
+            @SessionObject
+            ExcelSession excelSession,
 
-            @Idx(index = "2", type = AttributeType.TEXT)
-            @Pkg(label = "Workbook Path")
-            @NotEmpty
-            String sourceWorkbookName,
-
-            @Idx(index = "3", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "3.1", pkg = @Pkg(label = "Name", value = "name")),
-                    @Idx.Option(index = "3.2", pkg = @Pkg(label = "Index", value = "index"))
+            @Idx(index = "2", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "2.1", pkg = @Pkg(label = "Name", value = "name")),
+                    @Idx.Option(index = "2.2", pkg = @Pkg(label = "Index", value = "index"))
             })
             @Pkg(label = "Select sheet by", default_value = "name", default_value_type = DataType.STRING)
             @SelectModes
             String selectSheetBy,
 
-            @Idx(index = "3.1.1", type = AttributeType.TEXT)
+            @Idx(index = "2.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Sheet Name")
             @NotEmpty
             String originSheetName,
 
-            @Idx(index = "3.2.1", type = AttributeType.NUMBER)
+            @Idx(index = "2.2.1", type = AttributeType.NUMBER)
             @Pkg(label = "Sheet Index (1-based)")
             @NotEmpty
             Double originSheetIndex,
 
-            @Idx(index = "4", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "4.1", pkg = @Pkg(label = "Por letra (A,B,C...)", value = "letter")),
-                    @Idx.Option(index = "4.2", pkg = @Pkg(label = "Por nombre de encabezado", value = "header"))
+            @Idx(index = "3", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "3.1", pkg = @Pkg(label = "Por letra (A,B,C...)", value = "letter")),
+                    @Idx.Option(index = "3.2", pkg = @Pkg(label = "Por nombre de encabezado", value = "header"))
             })
             @Pkg(label = "Referencia de columna", default_value = "letter", default_value_type = DataType.STRING)
             String referenceMode,
 
-            @Idx(index = "4.2.1", type = AttributeType.CHECKBOX)
+            @Idx(index = "3.2.1", type = AttributeType.CHECKBOX)
             @Pkg(label = "Aplicar TRIM a encabezados (solo si usa nombre)", default_value = "true", default_value_type = DataType.BOOLEAN)
             Boolean trimHeaders,
 
-            @Idx(index = "4.2.2", type = AttributeType.TEXT)
+            @Idx(index = "3.2.2", type = AttributeType.TEXT)
             @Pkg(label = "Headers range (e.g., C9:BM9)")
             @NotEmpty
             String headersRange,
 
-            @Idx(index = "5", type = AttributeType.ENTRYLIST, options = {
-                    @Idx.Option(index = "5.1", pkg = @Pkg(title = "Column", label = "Column")),
-                    @Idx.Option(index = "5.2", pkg = @Pkg(title = "Criteria", label = "Criteria"))
+            @Idx(index = "4", type = AttributeType.ENTRYLIST, options = {
+                    @Idx.Option(index = "4.1", pkg = @Pkg(title = "Column", label = "Column")),
+                    @Idx.Option(index = "4.2", pkg = @Pkg(title = "Criteria", label = "Criteria"))
             })
             @Pkg(label = "Provide filter entries criteria o multiple criterias delimited by ;")
             @EntryListLabel(value = "Provide entry")
             @EntryListAddButtonLabel(value = "Add entry")
-            //@EntryListEntryUnique(value = "Column")
             @EntryListEmptyLabel(value = "No parameters added")
             List<Value> entryList
     ) {
@@ -138,13 +135,14 @@ public class FilterRows {
         }
 
         // ---------- Obtener sesión/Excel/Workbook/Sheet ----------
-        Session session = SessionManager.getSession(sessionId);
+        Session session = excelSession.getSession();
         if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found: " + sessionId);
+            throw new BotCommandException("Session not found o closed");
 
-        Dispatch wb = session.openWorkbooks.get(sourceWorkbookName);
-        if (wb == null)
-            throw new BotCommandException("Workbook not open: " + sourceWorkbookName);
+        if (session.openWorkbooks.isEmpty())
+            throw new BotCommandException("No workbook is open in this session.");
+
+        Dispatch wb = session.openWorkbooks.values().iterator().next();
 
         Dispatch sheets = Dispatch.get(wb, "Sheets").toDispatch();
         Dispatch sheet = "index".equalsIgnoreCase(selectSheetBy)

@@ -3,10 +3,12 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.exception.BotCommandException;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
+import com.automationanywhere.commandsdk.annotations.rules.SessionObject;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
@@ -22,28 +24,25 @@ public class SaveWorkbookAs {
 
     @Execute
     public Value<String> action(
-            @Idx(index = "1", type = AttributeType.TEXT)
-            @Pkg(label = "Session ID", default_value_type = DataType.STRING, default_value = "Default")
+            @Idx(index = "1", type = AttributeType.SESSION)
+            @Pkg(label = "Workbook Session")
             @NotEmpty
-            String sessionId,
+            @SessionObject
+            ExcelSession excelSession,
 
-            @Idx(index = "2", type = AttributeType.TEXT)
-            @Pkg(label = "Workbook Name")
-            @NotEmpty
-            String workbookName,
-
-            @Idx(index = "3", type = AttributeType.FILE)
+            @Idx(index = "2", type = AttributeType.FILE)
             @Pkg(label = "Destination Path")
             @NotEmpty
             String destPath
     ) {
-        Session session = SessionManager.getSession(sessionId);
+        Session session = excelSession.getSession();
         if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found: " + sessionId);
+            throw new BotCommandException("Session not found o closed");
 
-        Dispatch wb = session.openWorkbooks.get(workbookName);
-        if (wb == null)
-            throw new BotCommandException("Workbook not open: " + workbookName);
+        if (session.openWorkbooks.isEmpty())
+            throw new BotCommandException("No workbook is open in this session.");
+
+        Dispatch wb = session.openWorkbooks.values().iterator().next();
 
         Dispatch.call(wb, "SaveAs", destPath);
         return new StringValue("Workbook saved as: " + destPath);

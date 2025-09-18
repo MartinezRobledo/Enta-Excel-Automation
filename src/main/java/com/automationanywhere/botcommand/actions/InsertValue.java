@@ -1,13 +1,11 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
-import com.automationanywhere.commandsdk.annotations.rules.GreaterThanEqualTo;
-import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
-import com.automationanywhere.commandsdk.annotations.rules.NumberInteger;
-import com.automationanywhere.commandsdk.annotations.rules.SelectModes;
+import com.automationanywhere.commandsdk.annotations.rules.*;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
@@ -24,110 +22,107 @@ public class InsertValue {
 
     @Execute
     public void action(
-            @Idx(index = "1", type = AttributeType.TEXT)
-            @Pkg(label = "Session ID", default_value_type = DataType.STRING, default_value = "Default")
+            @Idx(index = "1", type = AttributeType.SESSION)
+            @Pkg(label = "Workbook Session")
             @NotEmpty
-            String sessionId,
+            @SessionObject
+            ExcelSession excelSession,
 
-            @Idx(index = "2", type = AttributeType.TEXT)
-            @Pkg(label = "Workbook Path")
-            @NotEmpty
-            String workbookName,
-
-            @Idx(index = "3", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "3.1", pkg = @Pkg(label = "Name", value = "name")),
-                    @Idx.Option(index = "3.2", pkg = @Pkg(label = "Index", value = "index"))
+            @Idx(index = "2", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "2.1", pkg = @Pkg(label = "Name", value = "name")),
+                    @Idx.Option(index = "2.2", pkg = @Pkg(label = "Index", value = "index"))
             })
             @Pkg(label = "Select sheet by", default_value = "name", default_value_type = DataType.STRING)
             @SelectModes
             String selectSheetBy,
 
-            @Idx(index = "3.1.1", type = AttributeType.TEXT)
+            @Idx(index = "2.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Sheet Name")
             @NotEmpty
             String sheetName,
 
-            @Idx(index = "3.2.1", type = AttributeType.NUMBER)
+            @Idx(index = "2.2.1", type = AttributeType.NUMBER)
             @Pkg(label = "Sheet Index (1-based)")
             @NumberInteger
             @GreaterThanEqualTo("1")
             @NotEmpty
             Double sheetIndex,
 
-            @Idx(index = "4", type = AttributeType.TEXT)
+            @Idx(index = "3", type = AttributeType.TEXT)
             @Pkg(label = "Value or Formula")
             @NotEmpty
             String value,
 
-            @Idx(index = "5", type = AttributeType.CHECKBOX)
+            @Idx(index = "4", type = AttributeType.CHECKBOX)
             @Pkg(label = "Is Formula?", default_value_type = DataType.BOOLEAN, default_value = "false")
             Boolean isFormula,
 
-            @Idx(index = "6", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "6.1", pkg = @Pkg(label = "Celda", value = "cell")),
-                    @Idx.Option(index = "6.2", pkg = @Pkg(label = "Columna", value = "column")),
-                    @Idx.Option(index = "6.3", pkg = @Pkg(label = "Rango", value = "range"))
+            @Idx(index = "5", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "5.1", pkg = @Pkg(label = "Celda", value = "cell")),
+                    @Idx.Option(index = "5.2", pkg = @Pkg(label = "Columna", value = "column")),
+                    @Idx.Option(index = "5.3", pkg = @Pkg(label = "Rango", value = "range"))
             })
             @Pkg(label = "Insert Mode", default_value = "cell", default_value_type = DataType.STRING)
             String insertMode,
 
-            @Idx(index = "6.1.1", type = AttributeType.TEXT)
+            @Idx(index = "5.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Target Cell (ej A1)")
             @NotEmpty
             String targetCell,
 
-            @Idx(index = "6.2.1", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "6.2.1.1", pkg = @Pkg(label = "Header", value = "header")),
-                    @Idx.Option(index = "6.2.1.2", pkg = @Pkg(label = "Letter", value = "letter"))
+            @Idx(index = "5.2.1", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "5.2.1.1", pkg = @Pkg(label = "Header", value = "header")),
+                    @Idx.Option(index = "5.2.1.2", pkg = @Pkg(label = "Letter", value = "letter"))
             })
             @Pkg(label = "Select Column By", default_value = "letter", default_value_type = DataType.STRING)
             @SelectModes
             String selectColumnBy,
 
-            @Idx(index = "6.2.1.1.1", type = AttributeType.TEXT)
+            @Idx(index = "5.2.1.1.1", type = AttributeType.TEXT)
             @Pkg(label = "Column Header Name")
             @NotEmpty
             String columnName,
 
-            @Idx(index = "6.2.1.2.1", type = AttributeType.TEXT)
+            @Idx(index = "5.2.1.2.1", type = AttributeType.TEXT)
             @Pkg(label = "Column Letter (A, B, ...)")
             @NotEmpty
             String columnLetter,
 
-            @Idx(index = "6.2.2", type = AttributeType.SELECT, options = {
-                    @Idx.Option(index = "6.2.2.1", pkg = @Pkg(label = "In Column", value = "inColumn")),
-                    @Idx.Option(index = "6.2.2.2", pkg = @Pkg(label = "End of Column", value = "endColumn"))
+            @Idx(index = "5.2.2", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "5.2.2.1", pkg = @Pkg(label = "In Column", value = "inColumn")),
+                    @Idx.Option(index = "5.2.2.2", pkg = @Pkg(label = "End of Column", value = "endColumn"))
             })
             @Pkg(label = "Select Mode By", default_value = "inColumn", default_value_type = DataType.STRING)
             @SelectModes
             String selectColModeBy,
 
-            @Idx(index = "6.2.2.1.1", type = AttributeType.NUMBER)
+            @Idx(index = "5.2.2.1.1", type = AttributeType.NUMBER)
             @Pkg(label = "Start Row (for column insert)", default_value = "2", default_value_type = DataType.NUMBER)
             @NumberInteger
             @GreaterThanEqualTo("1")
             Double startRowInput,
 
-            @Idx(index = "6.2.2.2.1", type = AttributeType.NUMBER)
+            @Idx(index = "5.2.2.2.1", type = AttributeType.NUMBER)
             @Pkg(label = "Margin top (in rows)", default_value = "0", default_value_type = DataType.NUMBER)
             @NumberInteger
             @GreaterThanEqualTo("0")
             @NotEmpty
             Double marginTopRows,
 
-            @Idx(index = "6.3.1", type = AttributeType.TEXT)
+            @Idx(index = "5.3.1", type = AttributeType.TEXT)
             @Pkg(label = "Target range (ej A1:F12)")
             @NotEmpty
             String targetRange
     ) {
 
-        Session session = SessionManager.getSession(sessionId);
+        Session session = excelSession.getSession();
         if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found: " + sessionId);
+            throw new BotCommandException("Session not found o closed");
 
-        Dispatch wb = session.openWorkbooks.get(workbookName);
-        if (wb == null)
-            throw new BotCommandException("Workbook not open: " + workbookName);
+        if (session.openWorkbooks.isEmpty())
+            throw new BotCommandException("No workbook is open in this session.");
+
+        Dispatch wb = session.openWorkbooks.values().iterator().next();
 
         Dispatch sheets = Dispatch.get(wb, "Sheets").toDispatch();
         Dispatch sheet;
