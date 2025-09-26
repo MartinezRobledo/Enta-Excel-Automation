@@ -3,9 +3,10 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ComScope;
+import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
-import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.NotEmpty;
 import com.automationanywhere.commandsdk.annotations.rules.SelectModes;
@@ -54,61 +55,61 @@ public class RangeToCSV {
 
             @Idx(index = "3", type = AttributeType.TEXT)
             @Pkg(label = "Range (e.g., A1:C5)")
-            @NotEmpty String rangeStr,
+            @NotEmpty
+            String rangeStr,
 
             @Idx(index = "4", type = AttributeType.CHECKBOX)
-            @Pkg(label = "Ignorar columnas vacias", description = "Si está marcado, las celdas vacías no se incluirán en el CSV",
+            @Pkg(label = "Ignorar columnas vacias",
+                    description = "Si está marcado, las celdas vacías no se incluirán en el CSV",
                     default_value_type = DataType.BOOLEAN, default_value = "false")
             Boolean ignoreEmpty
     ) {
-        Session session = excelSession.getSession();
-        if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found o closed");
+            // 1) Sesión + workbook correctos
+            Session session = ExcelObjects.requireSession(excelSession);
+            Dispatch wb = ExcelObjects.requireWorkbook(session, excelSession);
 
-        if (session.openWorkbooks.isEmpty())
-            throw new BotCommandException("No workbook is open in this session.");
+            // 2) Resolver hoja (valida nombre/índice y lanza errores claros)
+            Dispatch sheet = ExcelObjects.requireSheet(wb, selectSheetBy, sheetName, sheetIndex);
+            try { Dispatch.call(sheet, "Activate"); } catch (Exception ignore) {}
 
-        Dispatch wb = session.openWorkbooks.values().iterator().next();
+            // 3) Obtener el rango y validarlo
+            Dispatch range = Dispatch.call(sheet, "Range", rangeStr).toDispatch();
+            if (range == null || range.m_pDispatch == 0) {
+                throw new BotCommandException("Invalid or unresolved range: " + rangeStr);
+            }
 
-        Dispatch sheets = Dispatch.get(wb, "Sheets").toDispatch();
-        Dispatch sheet;
 
-        if ("index".equalsIgnoreCase(selectSheetBy)) {
-            sheet = Dispatch.call(sheets, "Item", sheetIndex.intValue()).toDispatch();
-        } else {
-            sheet = Dispatch.call(sheets, "Item", sheetName).toDispatch();
-        }
+            // 4) Iterar filas y columnas del rango
+            StringBuilder sb = new StringBuilder();
 
-        Dispatch range = Dispatch.call(sheet, "Range", rangeStr).toDispatch();
+            Dispatch rows = Dispatch.get(range, "Rows").toDispatch();
+            int rowCount = Dispatch.get(rows, "Count").getInt();
 
-        StringBuilder sb = new StringBuilder();
+            Dispatch cols = Dispatch.get(range, "Columns").toDispatch();
+            int colCount = Dispatch.get(cols, "Count").getInt();
 
-        Dispatch rows = Dispatch.get(range, "Rows").toDispatch();
-        int rowCount = Dispatch.get(rows, "Count").getInt();
+            boolean skipEmpty = Boolean.TRUE.equals(ignoreEmpty);
 
-        Dispatch cols = Dispatch.get(range, "Columns").toDispatch();
-        int colCount = Dispatch.get(cols, "Count").getInt();
+            for (int r = 1; r <= rowCount; r++) {
+                for (int c = 1; c <= colCount; c++) {
+                    Dispatch cell = Dispatch.call(range, "Cells", r, c).toDispatch();
+                    Variant value = Dispatch.get(cell, "Value"); // se mantiene Value (no Value2) por compat
+                    String valStr = (value != null && !value.isNull()) ? value.toString().trim() : "";
 
-        for (int r = 1; r <= rowCount; r++) {
-            for (int c = 1; c <= colCount; c++) {
-                Dispatch cell = Dispatch.call(range, "Cells", r, c).toDispatch();
-                Variant value = Dispatch.get(cell, "Value");
-                String valStr = value != null && !value.isNull() ? value.toString().trim() : "";
-
-                if (ignoreEmpty != null && ignoreEmpty) {
-                    if (!valStr.isEmpty()) {
-                        if (sb.length() > 0) sb.append(",");
+                    if (skipEmpty) {
+                        if (!valStr.isEmpty()) {
+                            if (sb.length() > 0) sb.append(",");
+                            sb.append(valStr);
+                        }
+                    } else {
                         sb.append(valStr);
-                    }
-                } else {
-                    sb.append(valStr);
-                    if (c < colCount || r < rowCount) {
-                        sb.append(",");
+                        if (c < colCount || r < rowCount) {
+                            sb.append(",");
+                        }
                     }
                 }
             }
-        }
 
-        return new StringValue(sb.toString());
+            return new StringValue(sb.toString());
     }
 }

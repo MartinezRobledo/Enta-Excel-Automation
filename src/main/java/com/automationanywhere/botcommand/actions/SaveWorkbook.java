@@ -3,6 +3,7 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.exception.BotCommandException;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
+import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.botcommand.utilities.Session;
@@ -30,14 +31,8 @@ public class SaveWorkbook {
             @SessionObject
             ExcelSession excelSession
     ) {
-        Session session = excelSession.getSession();
-        if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found o closed");
-
-        if (session.openWorkbooks.isEmpty())
-            throw new BotCommandException("No workbook is open in this session.");
-
-        Dispatch wb = session.openWorkbooks.values().iterator().next();
+        Session session = ExcelObjects.requireSession(excelSession);
+        Dispatch wb = ExcelObjects.requireWorkbook(session, excelSession);
 
         Dispatch.call(wb, "Save");
     }

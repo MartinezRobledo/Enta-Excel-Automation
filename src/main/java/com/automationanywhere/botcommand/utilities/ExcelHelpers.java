@@ -8,6 +8,77 @@ import java.util.*;
 
 public class ExcelHelpers {
 
+
+    private static final int xlUp       = -4162;
+    private static final int xlToLeft   = -4159;
+
+    /** ÍNDICE de la última fila con datos reales (constantes o fórmulas). 0 si no hay datos. */
+    public static int getLastDataRow(Dispatch sheet) {
+        Dispatch used = Dispatch.get(sheet, "UsedRange").toDispatch();
+        if (used == null || used.m_pDispatch == 0) return 0;
+
+        int usedFirstRow = Dispatch.get(used, "Row").getInt();
+        int usedFirstCol = Dispatch.get(used, "Column").getInt();
+        int usedRows     = Dispatch.get(Dispatch.get(used, "Rows").toDispatch(), "Count").getInt();
+        int usedCols     = Dispatch.get(Dispatch.get(used, "Columns").toDispatch(), "Count").getInt();
+        if (usedRows <= 0 || usedCols <= 0) return 0;
+
+        int lastPossibleRow = usedFirstRow + usedRows - 1;
+        int lastDataRow = 0;
+
+        // Escanear cada columna del UsedRange y tomar el máximo End(xlUp).Row
+        for (int c = usedFirstCol; c <= usedFirstCol + usedCols - 1; c++) {
+            Dispatch bottom = Dispatch.call(sheet, "Cells", lastPossibleRow, c).toDispatch();
+            Dispatch lastInCol = Dispatch.call(bottom, "End", new Variant(xlUp)).toDispatch();
+            int rowInCol = Dispatch.get(lastInCol, "Row").getInt();
+            if (rowInCol > lastDataRow) lastDataRow = rowInCol;
+        }
+        // Si el sheet está vacío, Excel puede devolver usedFirstRow aun sin datos "reales"
+        return (lastDataRow < usedFirstRow) ? 0 : lastDataRow;
+    }
+
+    /** ÍNDICE de la última columna con datos reales. 0 si no hay datos. */
+    public static int getLastDataColumn(Dispatch sheet) {
+        Dispatch used = Dispatch.get(sheet, "UsedRange").toDispatch();
+        if (used == null || used.m_pDispatch == 0) return 0;
+
+        int usedFirstRow = Dispatch.get(used, "Row").getInt();
+        int usedFirstCol = Dispatch.get(used, "Column").getInt();
+        int usedRows     = Dispatch.get(Dispatch.get(used, "Rows").toDispatch(), "Count").getInt();
+        int usedCols     = Dispatch.get(Dispatch.get(used, "Columns").toDispatch(), "Count").getInt();
+        if (usedRows <= 0 || usedCols <= 0) return 0;
+
+        int lastPossibleCol = usedFirstCol + usedCols - 1;
+        int lastDataCol = 0;
+
+        // Escanear cada fila del UsedRange y tomar el máximo End(xlToLeft).Column
+        for (int r = usedFirstRow; r <= usedFirstRow + usedRows - 1; r++) {
+            Dispatch right = Dispatch.call(sheet, "Cells", r, lastPossibleCol).toDispatch();
+            Dispatch lastInRow = Dispatch.call(right, "End", new Variant(xlToLeft)).toDispatch();
+            int colInRow = Dispatch.get(lastInRow, "Column").getInt();
+            if (colInRow > lastDataCol) lastDataCol = colInRow;
+        }
+        return (lastDataCol < usedFirstCol) ? 0 : lastDataCol;
+    }
+
+    /** CANTIDAD de filas con datos (desde la primera fila del UsedRange hasta la última fila con datos). */
+    public static int getDataRowCount(Dispatch sheet) {
+        Dispatch used = Dispatch.get(sheet, "UsedRange").toDispatch();
+        if (used == null || used.m_pDispatch == 0) return 0;
+        int usedFirstRow = Dispatch.get(used, "Row").getInt();
+        int lastDataRow = getLastDataRow(sheet);
+        if (lastDataRow == 0 || lastDataRow < usedFirstRow) return 0;
+        return lastDataRow - usedFirstRow + 1;
+    }
+
+    /** (Opcional) CANTIDAD de filas con datos desde una fila de header (incluyéndola o no). */
+    public static int getDataRowCountFromHeader(Dispatch sheet, int headerRow, boolean includeHeader) {
+        int last = getLastDataRow(sheet);
+        if (last == 0 || last < headerRow) return 0;
+        return includeHeader ? (last - headerRow + 1) : (last - headerRow);
+    }
+
+
     /**
      * Obtiene el número de filas con datos en una hoja de Excel
      * @param sheet Dispatch de la hoja

@@ -5,6 +5,7 @@ import com.automationanywhere.botcommand.data.impl.BooleanValue;
 import com.automationanywhere.botcommand.data.impl.DictionaryValue;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.botcommand.utilities.SessionManager;
@@ -98,23 +99,11 @@ public class CompareTablesById {
 
         try {
             // ==== Sesión y workbooks ====
-            Session sourceSession = sourceExcelSession.getSession();
-            if (sourceSession == null || sourceSession.excelApp == null)
-                throw new BotCommandException("Source Session not found o closed");
+            Session sourceSession = ExcelObjects.requireSession(sourceExcelSession);
+            Dispatch wb1 = ExcelObjects.requireWorkbook(sourceSession, sourceExcelSession);
 
-            if (sourceSession.openWorkbooks.isEmpty())
-                throw new BotCommandException("Source workbook: No workbook is open in this session.");
-
-            Dispatch wb1 = sourceSession.openWorkbooks.values().iterator().next();
-
-            Session destSession = destExcelSession.getSession();
-            if (destSession == null || destSession.excelApp == null)
-                throw new BotCommandException("Destination Session not found o closed");
-
-            if (sourceSession.openWorkbooks.isEmpty())
-                throw new BotCommandException("Destination workbook: No workbook is open in this session.");
-
-            Dispatch wb2 = destSession.openWorkbooks.values().iterator().next();
+            Session destSession = ExcelObjects.requireSession(destExcelSession);
+            Dispatch wb2 = ExcelObjects.requireWorkbook(destSession, destExcelSession);
 
             // ==== Hojas ====
             Dispatch sheet1 = selectOriginSheetBy.equals("name")

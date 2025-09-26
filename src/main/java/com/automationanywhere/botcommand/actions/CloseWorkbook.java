@@ -16,7 +16,7 @@ import com.jacob.com.Variant;
 @CommandPkg(
         label = "Close Workbook",
         name = "closeWorkbookSession",
-        description = "Closes a workbook and its associated session",
+        description = "Closes a workbook from the shared Excel session",
         icon = "excel.svg"
 )
 public class CloseWorkbook {
@@ -37,34 +37,61 @@ public class CloseWorkbook {
             @Pkg(label = "Keep open if session is global", default_value_type = DataType.BOOLEAN, default_value = "false")
             Boolean keepOpenGlobal
     ) {
+        if (excelSession == null) {
+            throw new BotCommandException("Workbook Session is null.");
+        }
+
         Session session = excelSession.getSession();
         String sessionId = excelSession.getSessionId();
+        String workbookKey = excelSession.getWorkbookKey();
 
         if (session == null || session.excelApp == null) {
             throw new BotCommandException("Session not found: " + sessionId);
         }
 
-        boolean shouldClose = !session.global || Boolean.FALSE.equals(keepOpenGlobal);
+        // Obtener SOLO el workbook asociado a esta ExcelSession
+        Dispatch wb = session.openWorkbooks.get(workbookKey);
+        if (wb == null) {
+            throw new BotCommandException("Workbook not tracked/open in session: " + workbookKey);
+        }
 
-        if (shouldClose) {
-            try {
-                for (Dispatch wb : session.openWorkbooks.values()) {
-                    if (Boolean.TRUE.equals(saveBeforeClose)) {
-                        Dispatch.call(wb, "Save");
-                    }
-                    Dispatch.call(wb, "Close", new Variant(false));
-                }
+        // Si es una sesión global y el usuario eligió mantener abierto, NO cerrar el workbook ni Excel
+        if (Boolean.TRUE.equals(session.global) && Boolean.TRUE.equals(keepOpenGlobal)) {
+            // (Opcional) Si querés permitir guardar sin cerrar en este caso:
+            // if (Boolean.TRUE.equals(saveBeforeClose)) { try { Dispatch.call(wb, "Save"); } catch (Exception ignore) {} }
+            return; // no cambiamos mapas ni sessionIds
+        }
 
-                Dispatch.call(session.excelApp, "Quit");
+        // Caso normal: cerrar SOLO este workbook
+        boolean shouldCloseExcelAfter = false;
 
-            } catch (Exception e) {
-                // Ignorar errores
-            } finally {
-                excelSession.close();
-                try {
-                    Runtime.getRuntime().exec("taskkill /F /IM EXCEL.EXE");
-                } catch (Exception ignored) {}
+        try {
+            if (Boolean.TRUE.equals(saveBeforeClose)) {
+                try { Dispatch.call(wb, "Save"); } catch (Exception ignore) {}
             }
+            try { Dispatch.call(wb, "Close", new Variant(false)); } catch (Exception ignore) {}
+        } finally {
+            // Remover del mapa si lo cerramos
+            session.openWorkbooks.remove(workbookKey);
+        }
+
+        // Si no quedan libros, evaluar cierre de Excel
+        if (session.openWorkbooks.isEmpty()) {
+            // Cerrar Excel si: no es global, o es global pero NO se pidió mantener abierto
+            shouldCloseExcelAfter = !(Boolean.TRUE.equals(session.global) && Boolean.TRUE.equals(keepOpenGlobal));
+        }
+
+        if (shouldCloseExcelAfter) {
+            try {
+                Dispatch.call(session.excelApp, "Quit");
+            } catch (Exception ignore) {
+            } finally {
+                // Remover TODAS las referencias a esta instancia de Session
+                SessionManager.removeAllByInstance(session);
+            }
+        } else {
+            // Remover solo este sessionId si cerramos el workbook pero Excel sigue abierto
+            SessionManager.removeSessionIdOnly(sessionId);
         }
     }
 }

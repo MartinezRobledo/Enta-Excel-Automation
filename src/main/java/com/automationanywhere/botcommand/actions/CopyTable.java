@@ -3,6 +3,7 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.BooleanValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.botcommand.utilities.Session;
@@ -20,7 +21,7 @@ import static com.automationanywhere.botcommand.utilities.ExcelHelpers.splitRang
 
 @BotCommand
 @CommandPkg(
-        label = "Copy Table Content",
+        label = "Copy Table Content (deprecated)",
         name = "copyTableContent",
         description = "Copies a table (with headers range) from one sheet to another with options for headers, filtering and columns ignoring",
         icon = "excel.svg",
@@ -133,23 +134,12 @@ public class CopyTable {
 
     ) {
         {
-            Session sourceSession = sourceExcelSession.getSession();
-            if (sourceSession == null || sourceSession.excelApp == null)
-                throw new BotCommandException("Source Session not found o closed");
+            // 1) Sesión + workbook correctos
+            Session sourceSession = ExcelObjects.requireSession(sourceExcelSession);
+            Dispatch wb1 = ExcelObjects.requireWorkbook(sourceSession, sourceExcelSession);
 
-            if (sourceSession.openWorkbooks.isEmpty())
-                throw new BotCommandException("Source workbook: No workbook is open in this session.");
-
-            Dispatch wb1 = sourceSession.openWorkbooks.values().iterator().next();
-
-            Session destSession = destExcelSession.getSession();
-            if (destSession == null || destSession.excelApp == null)
-                throw new BotCommandException("Destination Session not found o closed");
-
-            if (destSession.openWorkbooks.isEmpty())
-                throw new BotCommandException("Destination workbook: No workbook is open in this session.");
-
-            Dispatch wb2 = destSession.openWorkbooks.values().iterator().next();
+            Session destSession = ExcelObjects.requireSession(destExcelSession);
+            Dispatch wb2 = ExcelObjects.requireWorkbook(destSession, destExcelSession);
 
             Dispatch sourceSheets = Dispatch.get(wb1, "Sheets").toDispatch();
             Dispatch sourceSheet;
@@ -196,18 +186,30 @@ public class CopyTable {
                 Dispatch rows = Dispatch.get(usedRange, "Rows").toDispatch();
                 int lastRow = Dispatch.get(rows, "Count").getInt();
 
+
                 int startRow = "yes".equalsIgnoreCase(includeHeaders) ? headerRow : headerRow + 1;
+                if (lastRow < startRow) {
+                    return new BooleanValue(false);
+                }
                 String copyRange = startCell.replaceAll("\\d", "") + startRow + ":" + endCell.replaceAll("\\d", "") + lastRow;
 
                 Dispatch rangeToCopy = Dispatch.call(sourceSheet, "Range", copyRange).toDispatch();
 
                 boolean isFilteredCopy = false;
                 if ("visible".equalsIgnoreCase(rowsMode)) {
-                    rangeToCopy = Dispatch.call(rangeToCopy, "SpecialCells", new Variant(12)).toDispatch(); // xlCellTypeVisible=12
+                    Dispatch visible = specialCellsVisibleOrNull(rangeToCopy);
+                    if (visible == null) {
+                        // No hay filas visibles → no copiar y devolver false
+                        return new BooleanValue(false);
+                    }
+                    rangeToCopy = visible;
                     isFilteredCopy = true;
                 }
 
-                if (rangeToCopy == null) {
+                // Guard extra: si el rango a copiar no tiene filas útiles
+                Dispatch rowsToCopy = Dispatch.get(rangeToCopy, "Rows").toDispatch();
+                int rowsCountToCopy = Dispatch.get(rowsToCopy, "Count").getInt();
+                if (rowsCountToCopy <= 0) {
                     return new BooleanValue(false);
                 }
 
@@ -227,6 +229,8 @@ public class CopyTable {
 
                 // NUEVO: detectar si es la misma instancia de Excel
                 boolean sameExcelApp = isSameExcelApp(sourceSession, destSession);
+
+                boolean copiedSomething = false;
 
                 // Copiar ignorando columnas (compactado)
                 if ("yes".equalsIgnoreCase(applyIgnoreCol) && ignoreColumns != null && !ignoreColumns.isEmpty()) {
@@ -250,32 +254,32 @@ public class CopyTable {
                         Dispatch adjustedDest = Dispatch.call(destSheet, "Cells", destRow, destCol).toDispatch();
                         Dispatch adjustedDestResized = Dispatch.call(adjustedDest, "Resize", blockRows, blockCols).toDispatch();
 
-                        // Descombinar celdas (tu línea, la dejo equivalente pero más explícita)
-                        try {
-                            Dispatch.call(subRangeObj, "UnMerge");
-                        } catch (Exception ignore) {
-                        }
+                        try { Dispatch.call(subRangeObj, "UnMerge"); } catch (Exception ignore) {}
 
-                        // --- CAMBIO: copy/paste según instancia ---
                         if (isFilteredCopy) {
+                            Dispatch visibleCells = specialCellsVisibleOrNull(subRangeObj);
+                            if (visibleCells == null) {
+                                // No hay visibles en este subrango → continuar con el siguiente
+                                destColOffset += blockCols;
+                                continue;
+                            }
+
                             try {
-                                Dispatch visibleCells = Dispatch.call(subRangeObj, "SpecialCells", new Variant(12)).toDispatch(); // xlCellTypeVisible
                                 if (sameExcelApp) {
-                                    // MISMA instancia → Copy con destino directo
                                     Dispatch.call(visibleCells, "Copy", adjustedDestResized);
+                                    copiedSomething = true;
                                 } else {
-                                    // DISTINTAS instancias → 2 pasos
-                                    Dispatch.call(visibleCells, "Copy"); // al clipboard del sistema
+                                    Dispatch.call(visibleCells, "Copy");
                                     sleepQuiet(80);
                                     boolean pasted = pasteWithRetry(destSheet, adjustedDest);
-                                    if (!pasted) {
+                                    if (pasted) {
+                                        copiedSomething = true;
+                                    } else {
                                         clearCutCopyMode(sourceSession);
                                         clearCutCopyMode(destSession);
                                         throw new BotCommandException("No se pudo pegar desde portapapeles entre instancias (visibleCells).");
                                     }
                                 }
-                            } catch (Exception e) {
-                                // No hay filas visibles en este subrango → continuar
                             } finally {
                                 clearCutCopyMode(sourceSession);
                                 clearCutCopyMode(destSession);
@@ -283,15 +287,18 @@ public class CopyTable {
                         } else {
                             if (sameExcelApp) {
                                 Dispatch.call(subRangeObj, "Copy", adjustedDestResized);
+                                copiedSomething = true;
                                 clearCutCopyMode(sourceSession);
                                 clearCutCopyMode(destSession);
                             } else {
-                                Dispatch.call(subRangeObj, "Copy"); // al clipboard del sistema
+                                Dispatch.call(subRangeObj, "Copy");
                                 sleepQuiet(80);
                                 boolean pasted = pasteWithRetry(destSheet, adjustedDest);
                                 clearCutCopyMode(sourceSession);
                                 clearCutCopyMode(destSession);
-                                if (!pasted) {
+                                if (pasted) {
+                                    copiedSomething = true;
+                                } else {
                                     throw new BotCommandException("No se pudo pegar desde portapapeles entre instancias (subRange).");
                                 }
                             }
@@ -299,6 +306,12 @@ public class CopyTable {
 
                         destColOffset += blockCols;
                     }
+
+                    // Si no se copió nada en ninguna porción, devolver False
+                    if (!copiedSomething) {
+                        return new BooleanValue(false);
+                    }
+
                 } else {
                     // Copiar todo sin ignorar columnas
                     Dispatch rangeObj = rangeToCopy;
@@ -404,5 +417,15 @@ public class CopyTable {
         }
         return false;
     }
+
+    // Devuelve las celdas visibles o null si no hay visibles (sin lanzar excepción).
+    private static Dispatch specialCellsVisibleOrNull(Dispatch range) {
+        try {
+            return Dispatch.call(range, "SpecialCells", new Variant(12)).toDispatch(); // xlCellTypeVisible
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
 }
 

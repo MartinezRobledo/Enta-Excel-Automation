@@ -3,10 +3,7 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.exception.BotCommandException;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.NumberValue;
-import com.automationanywhere.botcommand.utilities.ExcelSession;
-import com.automationanywhere.botcommand.utilities.SessionManager;
-import com.automationanywhere.botcommand.utilities.Session;
-import com.automationanywhere.botcommand.utilities.ExcelHelpers;
+import com.automationanywhere.botcommand.utilities.*;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.*;
 import com.automationanywhere.commandsdk.model.AttributeType;
@@ -55,31 +52,15 @@ public class GetNumberOfRows {
             @NotEmpty
             Value<Double> varOutput
     ) {
-        Session session = excelSession.getSession();
-        if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found o closed");
+        // 1) Sesión + workbook correctos
+        Session session = ExcelObjects.requireSession(excelSession);
+        Dispatch wb = ExcelObjects.requireWorkbook(session, excelSession);
 
-        if (session.openWorkbooks.isEmpty())
-            throw new BotCommandException("No workbook is open in this session.");
+        // 2) Resolver hoja (valida nombre/índice y lanza errores claros)
+        Dispatch sheet = ExcelObjects.requireSheet(wb, selectSheetBy, sheetName, sheetIndex);
+        try { Dispatch.call(sheet, "Activate"); } catch (Exception ignore) {}
 
-        Dispatch wb = session.openWorkbooks.values().iterator().next();
-
-        Dispatch sheets = Dispatch.get(wb, "Sheets").toDispatch();
-        Dispatch sheet;
-
-        if("index".equalsIgnoreCase(selectSheetBy)) {
-            if(sheetIndex == null) {
-                throw new BotCommandException("Sheet index must be provided.");
-            }
-            sheet = Dispatch.call(sheets, "Item", sheetIndex.intValue()).toDispatch();
-        } else {
-            if(sheetName == null || sheetName.isEmpty()) {
-                throw new BotCommandException("Sheet name must be provided.");
-            }
-            sheet = Dispatch.call(sheets, "Item", sheetName).toDispatch();
-        }
-
-        int rows = ExcelHelpers.getLastRow(sheet);
+        int rows = ExcelHelpers.getLastDataRow(sheet);
         varOutput.set(((double) rows));
         return new NumberValue((double) rows);
     }

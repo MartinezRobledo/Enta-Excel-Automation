@@ -1,6 +1,7 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.SessionManager;
 import com.automationanywhere.botcommand.utilities.Session;
@@ -53,23 +54,12 @@ public class CopyRange {
             @NotEmpty
             String destStartCell
     ) {
-        Session sourceSession = sourceExcelSession.getSession();
-        if (sourceSession == null || sourceSession.excelApp == null)
-            throw new BotCommandException("Source Session not found o closed");
+        // 1) Sesión + workbook correctos
+        Session sourceSession = ExcelObjects.requireSession(sourceExcelSession);
+        Dispatch wb1 = ExcelObjects.requireWorkbook(sourceSession, sourceExcelSession);
 
-        if (sourceSession.openWorkbooks.isEmpty())
-            throw new BotCommandException("Source workbook: No workbook is open in this session.");
-
-        Dispatch wb1 = sourceSession.openWorkbooks.values().iterator().next();
-
-        Session destSession = destExcelSession.getSession();
-        if (destSession == null || destSession.excelApp == null)
-            throw new BotCommandException("Destination Session not found o closed");
-
-        if (sourceSession.openWorkbooks.isEmpty())
-            throw new BotCommandException("Destination workbook: No workbook is open in this session.");
-
-        Dispatch wb2 = destSession.openWorkbooks.values().iterator().next();
+        Session destSession = ExcelObjects.requireSession(destExcelSession);
+        Dispatch wb2 = ExcelObjects.requireWorkbook(destSession, destExcelSession);
 
         Dispatch sourceSheets = Dispatch.get(wb1, "Sheets").toDispatch();
         Dispatch sourceSheet = Dispatch.call(sourceSheets, "Item", sourceSheetName).toDispatch();

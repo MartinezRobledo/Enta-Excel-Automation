@@ -3,9 +3,11 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ComScope;
+import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
-import com.automationanywhere.botcommand.utilities.SessionManager;
+import com.automationanywhere.botcommand.utilities.SessionHelper;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.*;
 import com.automationanywhere.commandsdk.model.AttributeType;
@@ -61,94 +63,132 @@ public class GetHeadersRange {
             Value<String> varOutput,
 
             @Idx(index = "5", type = AttributeType.CHECKBOX)
-            @Pkg(label = "Allow discontinuous headers", description = "If checked, the range will continue even if some header cells are empty",
-            default_value_type = DataType.BOOLEAN, default_value = "false")
+            @Pkg(label = "Allow discontinuous headers",
+                    description = "If checked, the range will continue even if some header cells are empty",
+                    default_value_type = DataType.BOOLEAN, default_value = "false")
             Boolean allowDiscontinuousHeaders
     ) {
-        Session session = excelSession.getSession();
-        if (session == null || session.excelApp == null)
-            throw new BotCommandException("Session not found o closed");
+            // 1) Sesión + workbook correctos
+            Session session = ExcelObjects.requireSession(excelSession);
+            Dispatch wb = ExcelObjects.requireWorkbook(session, excelSession);
 
-        if (session.openWorkbooks.isEmpty())
-            throw new BotCommandException("No workbook is open in this session.");
+            // 2) Hoja a trabajar (usa helper que valida nombre/índice)
+            Dispatch sheet = SessionHelper.getSheet(wb, selectSheetBy, sheetName, sheetIndex == null ? null : sheetIndex.intValue());
+            try { Dispatch.call(sheet, "Activate"); } catch (Exception ignore) {}
 
-        Dispatch wb = session.openWorkbooks.values().iterator().next();
+            // 3) UsedRange y límites
+            Dispatch usedRange = Dispatch.get(sheet, "UsedRange").toDispatch();
+            int usedFirstRow = Dispatch.get(usedRange, "Row").getInt();
+            int usedFirstCol = Dispatch.get(usedRange, "Column").getInt();
+            int usedCols = Dispatch.get(Dispatch.get(usedRange, "Columns").toDispatch(), "Count").getInt();
+            int usedLastCol = usedFirstCol + usedCols - 1;
 
-        // Hoja
-        Dispatch sheets = Dispatch.get(wb, "Sheets").toDispatch();
-        Dispatch sheet = "index".equalsIgnoreCase(selectSheetBy)
-                ? Dispatch.call(sheets, "Item", sheetIndex.intValue()).toDispatch()
-                : Dispatch.call(sheets, "Item", sheetName).toDispatch();
+            // 4) Buscar el header: usamos Find y, para asegurar coincidencia exacta,
+            //    validamos el valor y, si es necesario, iteramos con FindNext hasta volver al primero.
+            Dispatch first = null;
+            Dispatch current = null;
+            try {
+                current = Dispatch.call(usedRange, "Find", referenceHeader).toDispatch();
+                if (current != null && current.m_pDispatch != 0) {
+                    first = current;
+                }
+            } catch (Exception ignore) {
+                current = null;
+            }
 
-        // UsedRange y límites (ojo: Rows/Columns devuelven Range; hay que pedir Count)
-        Dispatch usedRange = Dispatch.get(sheet, "UsedRange").toDispatch();
-        int usedFirstRow = Dispatch.get(usedRange, "Row").getInt();
-        int usedFirstCol = Dispatch.get(usedRange, "Column").getInt();
-        int usedRows = Dispatch.get(Dispatch.get(usedRange, "Rows").toDispatch(), "Count").getInt();
-        int usedCols = Dispatch.get(Dispatch.get(usedRange, "Columns").toDispatch(), "Count").getInt();
-        int usedLastCol = usedFirstCol + usedCols - 1;
+            if (current == null || current.m_pDispatch == 0) {
+                // no encontrado
+                if (varOutput != null) varOutput.set("");
+                return new StringValue("");
+            }
 
-        // Buscar el header
-        Dispatch findResult;
-        try {
-            findResult = Dispatch.call(usedRange, "Find", referenceHeader).toDispatch();
-        } catch (Exception e) {
-            // Excel puede lanzar excepción si no encuentra; tratamos como no encontrado
-            findResult = null;
-        }
+            final String target = referenceHeader == null ? "" : referenceHeader.trim();
+            String firstAddress = Dispatch.get(first, "Address").toString();
 
-        if (findResult == null || findResult.m_pDispatch == 0) {
-            varOutput.set("");
-            return new StringValue("");
-        }
+            boolean foundExact = false;
+            Dispatch exactCell = current;
 
-        int headerRow = Dispatch.get(findResult, "Row").getInt();
-        int foundCol = Dispatch.get(findResult, "Column").getInt();
+            while (true) {
+                Variant val = Dispatch.get(current, "Value");
+                String cellText = (val == null || val.isNull()) ? "" : val.toString().trim();
+                if (cellText.equals(target)) {
+                    foundExact = true;
+                    exactCell = current;
+                    break;
+                }
+                // avanzar al siguiente match
+                Dispatch next = null;
+                try { next = Dispatch.call(usedRange, "FindNext", current).toDispatch(); }
+                catch (Exception ignore) { next = null; }
 
-        // Expandir a izquierda hasta celda vacía (si no se permiten discontinuos)
-        int startCol = foundCol;
-        while (startCol - 1 >= usedFirstCol) {
-            Dispatch leftCell = Dispatch.call(sheet, "Cells", headerRow, startCol - 1).toDispatch();
-            Variant v = Dispatch.get(leftCell, "Value");
-            if (!allowDiscontinuousHeaders && (v.isNull() || v.toString().trim().isEmpty())) break;
-            startCol--;
-        }
+                if (next == null || next.m_pDispatch == 0) break;
 
-        // Expandir a derecha hasta celda vacía (si no se permiten discontinuos)
-        int endCol = foundCol;
-        while (endCol + 1 <= usedLastCol) {
-            Dispatch rightCell = Dispatch.call(sheet, "Cells", headerRow, endCol + 1).toDispatch();
-            Variant v = Dispatch.get(rightCell, "Value");
-            if (!allowDiscontinuousHeaders && (v.isNull() || v.toString().trim().isEmpty())) break;
-            endCol++;
-        }
+                String nextAddr = Dispatch.get(next, "Address").toString();
+                if (nextAddr.equals(firstAddress)) {
+                    // volvimos al primero: cortar
+                    break;
+                }
+                current = next;
+            }
 
-        // Ajuste de borde: primera celda
-        while (startCol <= endCol) {
-            Dispatch firstCell = Dispatch.call(sheet, "Cells", headerRow, startCol).toDispatch();
-            Variant v = Dispatch.get(firstCell, "Value");
-            if (v != null && !v.isNull() && !v.toString().trim().isEmpty()) break;
-            startCol++;
-        }
+            if (!foundExact) {
+                if (varOutput != null) varOutput.set("");
+                return new StringValue("");
+            }
 
-        // Ajuste de borde: última celda
-        while (endCol >= startCol) {
-            Dispatch lastCell = Dispatch.call(sheet, "Cells", headerRow, endCol).toDispatch();
-            Variant v = Dispatch.get(lastCell, "Value");
-            if (v != null && !v.isNull() && !v.toString().trim().isEmpty()) break;
-            endCol--;
-        }
+            int headerRow = Dispatch.get(exactCell, "Row").getInt();
+            int foundCol = Dispatch.get(exactCell, "Column").getInt();
 
-        // Construir rango final
-        String startColLetter = getColumnLetter(startCol);
-        String endColLetter = getColumnLetter(endCol);
-        String range = startColLetter + headerRow + ":" + endColLetter + headerRow;
+            // 5) Expandir hacia izquierda/derecha segun allowDiscontinuousHeaders
+            int startCol = foundCol;
+            while (startCol - 1 >= usedFirstCol) {
+                Dispatch leftCell = Dispatch.call(sheet, "Cells", headerRow, startCol - 1).toDispatch();
+                Variant v = Dispatch.get(leftCell, "Value");
+                boolean empty = (v == null || v.isNull() || v.toString().trim().isEmpty());
+                if (!allowDiscontinuousHeaders && empty) break;
+                // Si discontinuo está permitido, seguimos incluso si vacío
+                startCol--;
+            }
 
-        varOutput.set(range);
-        return new StringValue(range);
+            int endCol = foundCol;
+            while (endCol + 1 <= usedLastCol) {
+                Dispatch rightCell = Dispatch.call(sheet, "Cells", headerRow, endCol + 1).toDispatch();
+                Variant v = Dispatch.get(rightCell, "Value");
+                boolean empty = (v == null || v.isNull() || v.toString().trim().isEmpty());
+                if (!allowDiscontinuousHeaders && empty) break;
+                endCol++;
+            }
+
+            // Ajustes de borde: recortar vacíos en extremos si quedaron
+            while (startCol <= endCol) {
+                Dispatch firstCell = Dispatch.call(sheet, "Cells", headerRow, startCol).toDispatch();
+                Variant v = Dispatch.get(firstCell, "Value");
+                if (v != null && !v.isNull() && !v.toString().trim().isEmpty()) break;
+                startCol++;
+            }
+
+            while (endCol >= startCol) {
+                Dispatch lastCell = Dispatch.call(sheet, "Cells", headerRow, endCol).toDispatch();
+                Variant v = Dispatch.get(lastCell, "Value");
+                if (v != null && !v.isNull() && !v.toString().trim().isEmpty()) break;
+                endCol--;
+            }
+
+            if (endCol < startCol) {
+                if (varOutput != null) varOutput.set("");
+                return new StringValue("");
+            }
+
+            // 6) Construir rango final tipo "A10:F10"
+            String startColLetter = getColumnLetter(startCol);
+            String endColLetter = getColumnLetter(endCol);
+            String range = startColLetter + headerRow + ":" + endColLetter + headerRow;
+
+            if (varOutput != null) varOutput.set(range);
+            return new StringValue(range);
     }
 
-        private String getColumnLetter(int columnNumber) {
+    private String getColumnLetter(int columnNumber) {
         StringBuilder sb = new StringBuilder();
         while (columnNumber > 0) {
             int rem = (columnNumber - 1) % 26;
