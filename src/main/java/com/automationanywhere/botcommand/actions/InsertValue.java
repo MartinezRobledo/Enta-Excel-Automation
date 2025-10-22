@@ -1,6 +1,7 @@
 package com.automationanywhere.botcommand.actions;
 
 import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.automationanywhere.botcommand.utilities.ExcelHelpers;
 import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
@@ -8,22 +9,19 @@ import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.*;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
-import com.jacob.activeX.ActiveXComponent;
 import com.jacob.com.ComThread;
 import com.jacob.com.Dispatch;
-import com.jacob.com.Variant;
+
+import static com.automationanywhere.botcommand.utilities.ExcelHelpers.*;
 
 @BotCommand
 @CommandPkg(
-        label = "Insert Value",
+        label = "Set Value",
         name = "insertValue",
         description = "Inserta un valor o fórmula en una celda, columna o rango (optimizado)",
         icon = "excel.svg"
 )
 public class InsertValue {
-
-    private static final int xlCalculationAutomatic = -4105;
-    private static final int xlCalculationManual    = -4135;
 
     @Execute
     public void action(
@@ -158,7 +156,6 @@ public class InsertValue {
                 int firstRow = Dispatch.get(used, "Row").getInt();
                 int rowsCnt  = Dispatch.get(Dispatch.get(used, "Rows").toDispatch(), "Count").getInt();
                 int colsCnt  = Dispatch.get(Dispatch.get(used, "Columns").toDispatch(), "Count").getInt();
-                int lastRow  = firstRow + rowsCnt - 1;  // **FIX** índice absoluto correcto
 
                 int colIndex;
                 if ("letter".equalsIgnoreCase(selectColumnBy)) {
@@ -166,42 +163,47 @@ public class InsertValue {
                         throw new BotCommandException("Column letter not provided.");
                     colIndex = excelColumnLetterToNumber(columnLetter);
                 } else {
-                    if (columnName == null || columnName.isEmpty())
-                        throw new BotCommandException("Column header not provided.");
-                    colIndex = -1;
                     String target = columnName.trim();
-                    for (int c = 1; c <= colsCnt; c++) {
-                        Dispatch hdrCell = Dispatch.call(sheet, "Cells", firstRow, c).toDispatch();
-                        String hdr = safeVariantToString(Dispatch.get(hdrCell, "Value"));
-                        if (hdr != null && hdr.trim().equalsIgnoreCase(target)) { colIndex = c; break; }
-                    }
-                    if (colIndex == -1) throw new BotCommandException("Header not found: " + target);
+                    colIndex = ExcelHelpers.headerNameToColumnIndex(sheet, target, firstRow, colsCnt);
                 }
 
-                if ("inColumn".equalsIgnoreCase(selectColModeBy)) {
-                    int startRow = (startRowInput != null) ? startRowInput.intValue() : firstRow + 1;
-                    if (startRow > lastRow) return;
+            if ("inColumn".equalsIgnoreCase(selectColModeBy)) {
+                // 1) Dos esquinas del rango
+                Dispatch start = Dispatch.call(sheet, "Cells", startRowInput.intValue(), colIndex).toDispatch();
+                Dispatch end   = Dispatch.call(sheet, "Cells", rowsCnt,    colIndex).toDispatch();
 
-                    // *** VECTORIZAR: construir el rango completo y setear en UNA llamada ***
-                    int height = (lastRow - startRow + 1);
-                    Dispatch start = Dispatch.call(sheet, "Cells", startRow, colIndex).toDispatch();
-                    Dispatch rng   = Dispatch.call(start, "Resize", height, 1).toDispatch();
-                    if (Boolean.TRUE.equals(isFormula)) Dispatch.put(rng, "Formula", value);
-                    else                                 Dispatch.put(rng, "Value2", value);
+                // 2) Construir el rango con Range(Cell1, Cell2) en lugar de Resize
+                // (algunas versiones requieren 'invoke' para la sobrecarga de 2 args)
+                Dispatch rng = Dispatch.invoke(
+                        sheet, "Range", Dispatch.Get,
+                        new Object[]{ start, end }, new int[1]
+                ).toDispatch();
 
-                } else if ("endColumn".equalsIgnoreCase(selectColModeBy)) {
+                // 3) Escribir (idéntico a 'range')
+                if (Boolean.TRUE.equals(isFormula)) {
+                    Dispatch.put(rng, "Formula", value);   // también podés usar AutoFill si querés
+                } else {
+                    Dispatch.put(rng, "Value2",  value);   // escalar se replica a todo el rango
+                }
+
+            } else if ("endColumn".equalsIgnoreCase(selectColModeBy)) {
                     // Buscar última fila con datos en ESA columna (correcto en índices absolutos)
-                    int lastDataRow = firstRow - 1;
-                    for (int r = firstRow; r <= lastRow; r++) {
-                        Dispatch cell = Dispatch.call(sheet, "Cells", r, colIndex).toDispatch();
-                        String v = safeVariantToString(Dispatch.get(cell, "Value"));
-                        if (v != null && !v.isEmpty()) lastDataRow = r;
+                    // 1) el helper devuelve un int (índice de última fila con datos en esa columna)
+                    int lastDataRow = ExcelHelpers.getLastDataRowInColumn(sheet, colIndex);
+
+                    // nada que hacer si la columna está vacía o si el startRow excede
+                    if (lastDataRow == 0 || firstRow > lastDataRow) {
+                        return;
                     }
+
                     int offset = (marginTopRows != null) ? marginTopRows.intValue() : 0;
-                    int targetRow = (lastDataRow >= firstRow ? lastDataRow : firstRow - 1) + offset + 1;
+                    int targetRow = lastDataRow + offset + 1;
+
                     Dispatch cell = Dispatch.call(sheet, "Cells", targetRow, colIndex).toDispatch();
-                    if (Boolean.TRUE.equals(isFormula)) Dispatch.put(cell, "Formula", value);
-                    else                                 Dispatch.put(cell, "Value2", value);
+                    if (Boolean.TRUE.equals(isFormula))
+                        Dispatch.put(cell, "Formula", value);
+                    else
+                        Dispatch.put(cell, "Value2", value);
                 } else {
                     throw new BotCommandException("Invalid Select Mode By: " + selectColModeBy);
                 }
@@ -222,28 +224,5 @@ public class InsertValue {
             putBool(app, "EnableEvents",   prevEvt);
             putBool(app, "ScreenUpdating", prevUpd);
         }
-    }
-
-    private static int excelColumnLetterToNumber(String col) {
-        int res = 0; col = col.toUpperCase();
-        for (int i = 0; i < col.length(); i++) res = res * 26 + (col.charAt(i) - 'A' + 1);
-        return res;
-    }
-    private static String safeVariantToString(Variant v) {
-        if (v == null || v.isNull()) return "";
-        Object o = v.toJavaObject();
-        return (o != null) ? o.toString() : "";
-    }
-    private static boolean getBool(Dispatch app, String prop) {
-        try { return Dispatch.get(app, prop).getBoolean(); } catch (Exception e) { return true; }
-    }
-    private static int getInt(Dispatch app, String prop) {
-        try { return Dispatch.get(app, prop).getInt(); } catch (Exception e) { return xlCalculationAutomatic; }
-    }
-    private static void putBool(Dispatch app, String prop, boolean v) {
-        try { Dispatch.put(app, prop, v); } catch (Exception ignore) {}
-    }
-    private static void putInt(Dispatch app, String prop, int v) {
-        try { Dispatch.put(app, prop, new Variant(v)); } catch (Exception ignore) {}
     }
 }

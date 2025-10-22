@@ -19,7 +19,7 @@ import java.util.*;
 
 @BotCommand
 @CommandPkg(
-        label = "Compare Tables by ID Column",
+        label = "Compare Tables by ID Column (deprecated)",
         name = "compareExcelRangesHash",
         description = "Compares ranges from two Excel workbooks using column ID",
         icon = "excel.svg",

@@ -55,43 +55,79 @@ public class CloseWorkbook {
             throw new BotCommandException("Workbook not tracked/open in session: " + workbookKey);
         }
 
-        // Si es una sesión global y el usuario eligió mantener abierto, NO cerrar el workbook ni Excel
+        // Si es una sesión global y el usuario eligió mantener abierto, NO cerrar el workbook ni Excel, ni tocar mapas
         if (Boolean.TRUE.equals(session.global) && Boolean.TRUE.equals(keepOpenGlobal)) {
-            // (Opcional) Si querés permitir guardar sin cerrar en este caso:
+            // (Opcional) Si quisieras permitir guardar sin cerrar en este caso:
             // if (Boolean.TRUE.equals(saveBeforeClose)) { try { Dispatch.call(wb, "Save"); } catch (Exception ignore) {} }
-            return; // no cambiamos mapas ni sessionIds
+            return;
         }
 
-        // Caso normal: cerrar SOLO este workbook
-        boolean shouldCloseExcelAfter = false;
+        boolean closeSucceeded = false;
 
+        // Desactivar alerts para evitar prompts (e.g. "¿Guardar cambios?")
+        Dispatch app = session.excelApp;
+        Boolean prevAlerts = null;
         try {
+            try {
+                prevAlerts = Dispatch.get(app, "DisplayAlerts").getBoolean();
+            } catch (Exception ignore) { /* si falla, lo dejamos nulo */ }
+
+            try {
+                if (prevAlerts != null) {
+                    Dispatch.put(app, "DisplayAlerts", false);
+                }
+            } catch (Exception ignore) { }
+
+            // Guardar si aplica
             if (Boolean.TRUE.equals(saveBeforeClose)) {
-                try { Dispatch.call(wb, "Save"); } catch (Exception ignore) {}
+                try {
+                    Dispatch.call(wb, "Save");
+                } catch (Exception ignore) { }
             }
-            try { Dispatch.call(wb, "Close", new Variant(false)); } catch (Exception ignore) {}
+
+            // Cerrar workbook: usamos el flag de guardado para reforzar
+            try {
+                Dispatch.call(wb, "Close", new Variant(Boolean.TRUE.equals(saveBeforeClose)));
+                closeSucceeded = true;
+            } catch (Exception e) {
+                // Propagamos el error sin tocar el mapa; el libro sigue registrado
+                throw e;
+            }
         } finally {
-            // Remover del mapa si lo cerramos
+            // Restaurar DisplayAlerts si lo pudimos leer antes
+            if (prevAlerts != null) {
+                try { Dispatch.put(app, "DisplayAlerts", prevAlerts); } catch (Exception ignore) { }
+            }
+        }
+
+        // Remover del mapa SOLO si efectivamente se cerró el libro
+        if (closeSucceeded) {
             session.openWorkbooks.remove(workbookKey);
         }
 
-        // Si no quedan libros, evaluar cierre de Excel
-        if (session.openWorkbooks.isEmpty()) {
-            // Cerrar Excel si: no es global, o es global pero NO se pidió mantener abierto
-            shouldCloseExcelAfter = !(Boolean.TRUE.equals(session.global) && Boolean.TRUE.equals(keepOpenGlobal));
-        }
+        // Primero remover SOLO este sessionId de SessionManager
+        SessionManager.removeSessionIdOnly(sessionId);
+
+        // Evaluar cierre de Excel: debe cumplirse TODO:
+        // 1) Cerró el libro actual
+        // 2) Ya no quedan libros en 'openWorkbooks' de esta sesión
+        // 3) O la sesión NO es global, o es global pero NO se pidió mantener abierto
+        // 4) Ya NO quedan referencias a esta instancia en el SessionManager
+        boolean shouldCloseExcelAfter =
+                closeSucceeded
+                        && session.openWorkbooks.isEmpty()
+                        && !(Boolean.TRUE.equals(session.global) && Boolean.TRUE.equals(keepOpenGlobal))
+                        && !SessionManager.hasRefs(session);
 
         if (shouldCloseExcelAfter) {
             try {
                 Dispatch.call(session.excelApp, "Quit");
             } catch (Exception ignore) {
             } finally {
-                // Remover TODAS las referencias a esta instancia de Session
-                SessionManager.removeAllByInstance(session);
+                // En este punto, al no quedar refs, removeAllByInstance sería redundante.
+                // Si tu implementación requiere limpieza extra del manager, podrías invocarla aquí.
+                try { com.jacob.com.ComThread.Release(); } catch (Exception ignore) {}
             }
-        } else {
-            // Remover solo este sessionId si cerramos el workbook pero Excel sigue abierto
-            SessionManager.removeSessionIdOnly(sessionId);
         }
     }
 }

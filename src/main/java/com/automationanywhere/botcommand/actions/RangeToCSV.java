@@ -3,7 +3,6 @@ package com.automationanywhere.botcommand.actions;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.StringValue;
 import com.automationanywhere.botcommand.exception.BotCommandException;
-import com.automationanywhere.botcommand.utilities.ComScope;
 import com.automationanywhere.botcommand.utilities.ExcelObjects;
 import com.automationanywhere.botcommand.utilities.ExcelSession;
 import com.automationanywhere.botcommand.utilities.Session;
@@ -14,7 +13,6 @@ import com.automationanywhere.commandsdk.annotations.rules.SessionObject;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
-import com.jacob.com.Variant;
 
 @BotCommand
 @CommandPkg(
@@ -64,52 +62,72 @@ public class RangeToCSV {
                     default_value_type = DataType.BOOLEAN, default_value = "false")
             Boolean ignoreEmpty
     ) {
-            // 1) Sesión + workbook correctos
-            Session session = ExcelObjects.requireSession(excelSession);
-            Dispatch wb = ExcelObjects.requireWorkbook(session, excelSession);
+        // 1) Sesión + workbook correctos
+        Session session = ExcelObjects.requireSession(excelSession);
+        Dispatch wb = ExcelObjects.requireWorkbook(session, excelSession);
 
-            // 2) Resolver hoja (valida nombre/índice y lanza errores claros)
-            Dispatch sheet = ExcelObjects.requireSheet(wb, selectSheetBy, sheetName, sheetIndex);
-            try { Dispatch.call(sheet, "Activate"); } catch (Exception ignore) {}
+        // 2) Resolver hoja (valida nombre/índice y lanza errores claros)
+        Dispatch sheet = ExcelObjects.requireSheet(wb, selectSheetBy, sheetName, sheetIndex);
+        try { Dispatch.call(sheet, "Activate"); } catch (Exception ignore) {}
 
-            // 3) Obtener el rango y validarlo
-            Dispatch range = Dispatch.call(sheet, "Range", rangeStr).toDispatch();
-            if (range == null || range.m_pDispatch == 0) {
-                throw new BotCommandException("Invalid or unresolved range: " + rangeStr);
-            }
+        // 3) Obtener el rango y validarlo
+        Dispatch range = Dispatch.call(sheet, "Range", rangeStr).toDispatch();
+        if (range == null || range.m_pDispatch == 0) {
+            throw new BotCommandException("Invalid or unresolved range: " + rangeStr);
+        }
 
+        // 4) Iterar filas y columnas del rango
+        StringBuilder sb = new StringBuilder();
 
-            // 4) Iterar filas y columnas del rango
-            StringBuilder sb = new StringBuilder();
+        Dispatch rows = Dispatch.get(range, "Rows").toDispatch();
+        int rowCount = Dispatch.get(rows, "Count").getInt();
 
-            Dispatch rows = Dispatch.get(range, "Rows").toDispatch();
-            int rowCount = Dispatch.get(rows, "Count").getInt();
+        Dispatch cols = Dispatch.get(range, "Columns").toDispatch();
+        int colCount = Dispatch.get(cols, "Count").getInt();
 
-            Dispatch cols = Dispatch.get(range, "Columns").toDispatch();
-            int colCount = Dispatch.get(cols, "Count").getInt();
+        boolean skipEmpty = Boolean.TRUE.equals(ignoreEmpty);
 
-            boolean skipEmpty = Boolean.TRUE.equals(ignoreEmpty);
+        for (int r = 1; r <= rowCount; r++) {
+            for (int c = 1; c <= colCount; c++) {
+                Dispatch cell = Dispatch.call(range, "Cells", r, c).toDispatch();
 
-            for (int r = 1; r <= rowCount; r++) {
-                for (int c = 1; c <= colCount; c++) {
-                    Dispatch cell = Dispatch.call(range, "Cells", r, c).toDispatch();
-                    Variant value = Dispatch.get(cell, "Value"); // se mantiene Value (no Value2) por compat
-                    String valStr = (value != null && !value.isNull()) ? value.toString().trim() : "";
+                // Leer el texto visible tal cual Excel (evita "3001.0")
+                String valStr;
+                try {
+                    valStr = Dispatch.get(cell, "Text").getString();
+                    if (valStr == null) valStr = "";
+                    valStr = valStr.trim();
+                } catch (Exception ex) {
+                    valStr = ""; // si por alguna razón no hay texto
+                }
 
-                    if (skipEmpty) {
-                        if (!valStr.isEmpty()) {
-                            if (sb.length() > 0) sb.append(",");
-                            sb.append(valStr);
-                        }
-                    } else {
-                        sb.append(valStr);
-                        if (c < colCount || r < rowCount) {
-                            sb.append(",");
-                        }
+                // CSV-safe: comillas si hay coma, comillas o saltos de línea
+                String out = csvEscape(valStr);
+
+                if (skipEmpty) {
+                    if (!out.isEmpty()) {
+                        if (sb.length() > 0) sb.append(",");
+                        sb.append(out);
+                    }
+                } else {
+                    sb.append(out);
+                    if (c < colCount || r < rowCount) {
+                        sb.append(",");
                     }
                 }
             }
+        }
 
-            return new StringValue(sb.toString());
+        return new StringValue(sb.toString());
+    }
+
+    // --- Helpers ---
+
+    /** Escapa campos CSV con comillas si contienen coma, comillas o saltos de línea. */
+    private static String csvEscape(String s) {
+        if (s == null) return "";
+        boolean mustQuote = s.indexOf(',') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0;
+        if (!mustQuote) return s;
+        return "\"" + s.replace("\"", "\"\"") + "\"";
     }
 }

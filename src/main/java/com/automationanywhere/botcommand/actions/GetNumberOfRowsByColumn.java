@@ -1,33 +1,31 @@
 package com.automationanywhere.botcommand.actions;
 
-import com.automationanywhere.botcommand.data.impl.StringValue;
-import com.automationanywhere.botcommand.exception.BotCommandException;
 import com.automationanywhere.botcommand.data.Value;
 import com.automationanywhere.botcommand.data.impl.NumberValue;
-import com.automationanywhere.botcommand.utilities.*;
+import com.automationanywhere.botcommand.utilities.ExcelHelpers;
+import com.automationanywhere.botcommand.utilities.ExcelObjects;
+import com.automationanywhere.botcommand.utilities.ExcelSession;
+import com.automationanywhere.botcommand.utilities.Session;
 import com.automationanywhere.commandsdk.annotations.*;
 import com.automationanywhere.commandsdk.annotations.rules.*;
 import com.automationanywhere.commandsdk.model.AttributeType;
 import com.automationanywhere.commandsdk.model.DataType;
 import com.jacob.com.Dispatch;
 
-import static com.automationanywhere.botcommand.utilities.ExcelHelpers.getNumberOfRows;
-
 @BotCommand
 @CommandPkg(
-        label = "Get Number of Rows",
-        name = "getNumberOfRows",
-        description = "Returns the number of rows with data in a sheet",
-        return_label = "Number of rows",
+        label = "Get Number of Rows in column",
+        name = "getNumberOfRowsInColumn",
+        description = "Returns the number of rows with data in a column",
         return_type = DataType.NUMBER,
-        return_name = "NumberOfRows",
+        return_label = "Number of rows in column",
+        return_required = true,
         icon = "excel.svg"
 )
-public class GetNumberOfRows {
+public class GetNumberOfRowsByColumn {
 
     @Execute
     public Value<Double> action(
-    //public Value<String> action(
             @Idx(index = "1", type = AttributeType.SESSION)
             @Pkg(label = "Workbook Session")
             @NotEmpty
@@ -52,7 +50,22 @@ public class GetNumberOfRows {
             @NumberInteger
             @GreaterThanEqualTo("1")
             @NotEmpty
-            Double sheetIndex
+            Double sheetIndex,
+
+            @Idx(index = "3", type = AttributeType.SELECT, options = {
+                    @Idx.Option(index = "3.1", pkg = @Pkg(label = "Header", value = "header")),
+                    @Idx.Option(index = "3.2", pkg = @Pkg(label = "Letter", value = "letter"))
+            })
+            @Pkg(label = "Select Column By", default_value = "letter", default_value_type = DataType.STRING)
+            @SelectModes String selectColumnBy,
+
+            @Idx(index = "3.1.1", type = AttributeType.TEXT)
+            @Pkg(label = "Column Header Name")
+            @NotEmpty String columnName,
+
+            @Idx(index = "3.2.1", type = AttributeType.TEXT)
+            @Pkg(label = "Column Letter (A, B, ...)")
+            @NotEmpty String columnLetter
     ) {
         // 1) Sesión + workbook correctos
         Session session = ExcelObjects.requireSession(excelSession);
@@ -62,10 +75,15 @@ public class GetNumberOfRows {
         Dispatch sheet = ExcelObjects.requireSheet(wb, selectSheetBy, sheetName, sheetIndex);
         try { Dispatch.call(sheet, "Activate"); } catch (Exception ignore) {}
 
+        int rows;
+        if("letter".equalsIgnoreCase(selectColumnBy))
+            rows = ExcelHelpers.getLastDataRowInColumn(sheet, columnLetter);
+        else {
+            int cantCols = ExcelHelpers.getLastColumn(sheet);
+            int colIndex = ExcelHelpers.headerNameToColumnIndex(sheet, columnName, 1, cantCols);
+            rows = ExcelHelpers.getLastDataRowInColumn(sheet, colIndex);
+        }
 
-        int visibles = getNumberOfRows(sheet);
-        //String probe = evaluateSmokeTest(sheet);
-        return new NumberValue((double) visibles);
-        //return new StringValue(probe);
+        return new NumberValue((double) rows);
     }
 }

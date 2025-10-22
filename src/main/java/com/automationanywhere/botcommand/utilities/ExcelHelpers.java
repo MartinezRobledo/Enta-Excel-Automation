@@ -1,6 +1,8 @@
 package com.automationanywhere.botcommand.utilities;
 
 import com.automationanywhere.botcommand.data.Value;
+import com.automationanywhere.botcommand.exception.BotCommandException;
+import com.jacob.activeX.ActiveXComponent;
 import com.jacob.com.Dispatch;
 import com.jacob.com.Variant;
 
@@ -9,8 +11,232 @@ import java.util.*;
 public class ExcelHelpers {
 
 
-    private static final int xlUp       = -4162;
-    private static final int xlToLeft   = -4159;
+    // --- Límites reales de Excel (XFD = 16384; última fila = 1_048_576) ---
+    public static final int EXCEL_MAX_ROWS = 1_048_576;
+    public static final int EXCEL_MAX_COLS = 16_384;
+
+
+    public static final int xlUp       = -4162;
+    public static final int xlCalculationAutomatic = -4105;
+    public static final int xlCalculationManual    = -4135;
+
+
+    // ------------------------------------------------------------
+    // A1Ref: referencia A1 con soporte de absolutos ($)
+    // ------------------------------------------------------------
+    public static final class A1Ref {
+        public final int row;      // 1-based
+        public final int col;      // 1-based
+        public final boolean absRow;
+        public final boolean absCol;
+
+        public A1Ref(int row, int col, boolean absRow, boolean absCol) {
+            if (row < 1 || row > EXCEL_MAX_ROWS)
+                throw new BotCommandException("Row out of range for Excel: " + row);
+            if (col < 1 || col > EXCEL_MAX_COLS)
+                throw new BotCommandException("Column out of range for Excel: " + col);
+            this.row = row;
+            this.col = col;
+            this.absRow = absRow;
+            this.absCol = absCol;
+        }
+
+        @Override public String toString() { return ExcelHelpers.buildA1(this); }
+
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof A1Ref)) return false;
+            A1Ref that = (A1Ref) o;
+            return row == that.row && col == that.col && absRow == that.absRow && absCol == that.absCol;
+        }
+        @Override public int hashCode() {
+            int result = row;
+            result = 31 * result + col;
+            result = 31 * result + (absRow ? 1 : 0);
+            result = 31 * result + (absCol ? 1 : 0);
+            return result;
+        }
+    }
+
+
+    // ------------------------------------------------------------
+    // parseA1: "$C$9" | "C$9" | "$C9" | "C9"  -> A1Ref (1-based)
+    // ------------------------------------------------------------
+    public static A1Ref parseA1(String a1) {
+        if (a1 == null) throw new BotCommandException("A1 reference is null.");
+        String s = a1.trim().toUpperCase();
+        if (s.isEmpty()) throw new BotCommandException("A1 reference is empty.");
+
+        int i = 0;
+        boolean absCol = false, absRow = false;
+
+        // Optional $ before column
+        if (i < s.length() && s.charAt(i) == '$') { absCol = true; i++; }
+
+        // Column letters (A..Z)
+        int colStart = i;
+        while (i < s.length()) {
+            char ch = s.charAt(i);
+            if (ch >= 'A' && ch <= 'Z') i++; else break;
+        }
+        if (i == colStart) {
+            throw new BotCommandException("Invalid A1: missing column letters in '" + a1 + "'.");
+        }
+        String colLetters = s.substring(colStart, i);
+
+        // Optional $ before row
+        if (i < s.length() && s.charAt(i) == '$') { absRow = true; i++; }
+
+        // Row digits
+        int rowStart = i;
+        while (i < s.length()) {
+            char ch = s.charAt(i);
+            if (ch >= '0' && ch <= '9') i++; else break;
+        }
+        if (i == rowStart) {
+            throw new BotCommandException("Invalid A1: missing row digits in '" + a1 + "'.");
+        }
+        String rowDigits = s.substring(rowStart, i);
+
+        // No trailing garbage
+        if (i != s.length()) {
+            throw new BotCommandException("Invalid A1: trailing characters in '" + a1 + "'.");
+        }
+
+        int col = excelColumnLetterToNumber(colLetters);
+        int row;
+        try {
+            row = Integer.parseInt(rowDigits);
+        } catch (NumberFormatException nfe) {
+            throw new BotCommandException("Invalid A1 row number in '" + a1 + "'.");
+        }
+
+        return new A1Ref(row, col, absRow, absCol);
+    }
+
+    // ------------------------------------------------------------
+    // buildA1: arma "A1" con $ según flags de A1Ref
+    // ------------------------------------------------------------
+    public static String buildA1(A1Ref r) {
+        String colLetters = numberToColumnLetter(r.col);
+        StringBuilder sb = new StringBuilder();
+        if (r.absCol) sb.append('$');
+        sb.append(colLetters);
+        if (r.absRow) sb.append('$');
+        sb.append(r.row);
+        return sb.toString();
+    }
+
+    /**
+     * Última fila (índice 1-based) con datos o fórmula en la columna (por índice).
+     * Devuelve 0 si la columna está completamente vacía.
+     *
+     * Robusto: NO usa UsedRange. Sube con End(xlUp) desde la última fila de Excel.
+     */
+    public static int getLastDataRowInColumn(Dispatch sheet, int columnIndex) {
+        if (sheet == null || sheet.m_pDispatch == 0) return 0;
+        if (columnIndex < 1 || columnIndex > EXCEL_MAX_COLS)
+            throw new BotCommandException("Column out of range: " + columnIndex);
+
+        // Ir al fondo de la hoja en esa columna y subir con End(xlUp)
+        Dispatch bottom = Dispatch.call(sheet, "Cells", EXCEL_MAX_ROWS, columnIndex).toDispatch();
+        Dispatch lastInCol = Dispatch.call(bottom, "End", new Variant(xlUp)).toDispatch();
+        int row = Dispatch.get(lastInCol, "Row").getInt();
+
+        // Si cayó en fila 1, verificar si realmente hay algo en (1, col)
+        Dispatch cell = Dispatch.call(sheet, "Cells", row, columnIndex).toDispatch();
+        boolean hasFormula = false;
+        try { hasFormula = Dispatch.get(cell, "HasFormula").getBoolean(); } catch (Exception ignore) {}
+        Variant v = Dispatch.get(cell, "Value");
+        boolean emptyValue = (v == null || v.isNull() || v.toString().trim().isEmpty());
+
+        // Columna vacía → 0
+        if (row == 1 && emptyValue && !hasFormula) return 0;
+
+        return row;
+    }
+
+    /**
+     * ÍNDICE de la última fila con datos (constantes o fórmulas) en la columna dada por letra (A, B, ..., AA, ...).
+     * Devuelve 0 si la columna está completamente vacía.
+     */
+    public static int getLastDataRowInColumn(Dispatch sheet, String columnLetter) {
+        if (columnLetter == null || columnLetter.trim().isEmpty()) return 0;
+        int col = colLetterToIndex(columnLetter.trim());
+        return getLastDataRowInColumn(sheet, col);
+    }
+
+
+    public static int getNumberOfRows(Dispatch sheet) {
+        if (sheet == null || sheet.m_pDispatch == 0) return -1;
+
+        final int xlCellTypeVisible = 12;
+
+        // Tomamos UsedRange como base
+        Dispatch usedRange = Dispatch.get(sheet, "UsedRange").toDispatch();
+        if (usedRange == null || usedRange.m_pDispatch == 0) return -1;
+
+        // Tomar SOLO la primera columna del UsedRange (evita problemas con rangos no contiguos)
+        Dispatch firstCol = Dispatch.call(usedRange, "Columns", new Variant(1)).toDispatch();
+
+        // Filas visibles en esa columna
+        Dispatch visibleCol = Dispatch.call(firstCol, "SpecialCells", new Variant(xlCellTypeVisible)).toDispatch();
+
+        // Contar celdas visibles (equivale a filas visibles)
+        int count = Dispatch.get(visibleCol, "Count").getInt();
+
+        // Si hay AutoFilter, restar 1 (encabezado)
+        Dispatch autoFilter = Dispatch.get(sheet, "AutoFilter").toDispatch();
+        if (autoFilter != null && autoFilter.m_pDispatch != 0 && count > 0) {
+            count -= 1;
+        }
+
+        return count;
+    }
+
+
+    /** Intenta obtener la fila de header desde AutoFilter, o sino desde la primera tabla, o sino el inicio de UsedRange. */
+    private static int getHeaderRow(Dispatch sheet) {
+        try {
+            Dispatch autoFilter = Dispatch.get(sheet, "AutoFilter").toDispatch();
+            Dispatch rng = Dispatch.get(autoFilter, "Range").toDispatch();
+            return Dispatch.get(rng, "Row").getInt();
+        } catch (Exception ignore) {}
+
+        try {
+            Dispatch listObjects = Dispatch.get(sheet, "ListObjects").toDispatch();
+            int count = Dispatch.get(listObjects, "Count").getInt();
+            int min = Integer.MAX_VALUE;
+            for (int i = 1; i <= count; i++) {
+                Dispatch lo = Dispatch.call(listObjects, "Item", i).toDispatch();
+                Dispatch hdr = Dispatch.get(lo, "HeaderRowRange").toDispatch();
+                int r = Dispatch.get(hdr, "Row").getInt();
+                if (r < min) min = r;
+            }
+            if (min != Integer.MAX_VALUE) return min;
+        } catch (Exception ignore) {}
+
+        try {
+            Dispatch used = Dispatch.get(sheet, "UsedRange").toDispatch();
+            return Dispatch.get(used, "Row").getInt();
+        } catch (Exception ignore) {}
+
+        return 0;
+    }
+
+    /** Devuelve true si el header está dentro de las celdas visibles actuales. */
+    private static boolean headerIsVisible(Dispatch sheet, Dispatch used, Dispatch visible, Dispatch app) {
+        int headerRow = getHeaderRow(sheet);
+        if (headerRow <= 0) return false;
+        try {
+            Dispatch headerRowRange = Dispatch.call(sheet, "Rows", headerRow).toDispatch();
+            Dispatch visHeader = Dispatch.call(app, "Intersect", visible, headerRowRange).toDispatch();
+            return visHeader != null && visHeader.m_pDispatch != 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
 
     /** ÍNDICE de la última fila con datos reales (constantes o fórmulas). 0 si no hay datos. */
     public static int getLastDataRow(Dispatch sheet) {
@@ -37,59 +263,6 @@ public class ExcelHelpers {
         return (lastDataRow < usedFirstRow) ? 0 : lastDataRow;
     }
 
-    /** ÍNDICE de la última columna con datos reales. 0 si no hay datos. */
-    public static int getLastDataColumn(Dispatch sheet) {
-        Dispatch used = Dispatch.get(sheet, "UsedRange").toDispatch();
-        if (used == null || used.m_pDispatch == 0) return 0;
-
-        int usedFirstRow = Dispatch.get(used, "Row").getInt();
-        int usedFirstCol = Dispatch.get(used, "Column").getInt();
-        int usedRows     = Dispatch.get(Dispatch.get(used, "Rows").toDispatch(), "Count").getInt();
-        int usedCols     = Dispatch.get(Dispatch.get(used, "Columns").toDispatch(), "Count").getInt();
-        if (usedRows <= 0 || usedCols <= 0) return 0;
-
-        int lastPossibleCol = usedFirstCol + usedCols - 1;
-        int lastDataCol = 0;
-
-        // Escanear cada fila del UsedRange y tomar el máximo End(xlToLeft).Column
-        for (int r = usedFirstRow; r <= usedFirstRow + usedRows - 1; r++) {
-            Dispatch right = Dispatch.call(sheet, "Cells", r, lastPossibleCol).toDispatch();
-            Dispatch lastInRow = Dispatch.call(right, "End", new Variant(xlToLeft)).toDispatch();
-            int colInRow = Dispatch.get(lastInRow, "Column").getInt();
-            if (colInRow > lastDataCol) lastDataCol = colInRow;
-        }
-        return (lastDataCol < usedFirstCol) ? 0 : lastDataCol;
-    }
-
-    /** CANTIDAD de filas con datos (desde la primera fila del UsedRange hasta la última fila con datos). */
-    public static int getDataRowCount(Dispatch sheet) {
-        Dispatch used = Dispatch.get(sheet, "UsedRange").toDispatch();
-        if (used == null || used.m_pDispatch == 0) return 0;
-        int usedFirstRow = Dispatch.get(used, "Row").getInt();
-        int lastDataRow = getLastDataRow(sheet);
-        if (lastDataRow == 0 || lastDataRow < usedFirstRow) return 0;
-        return lastDataRow - usedFirstRow + 1;
-    }
-
-    /** (Opcional) CANTIDAD de filas con datos desde una fila de header (incluyéndola o no). */
-    public static int getDataRowCountFromHeader(Dispatch sheet, int headerRow, boolean includeHeader) {
-        int last = getLastDataRow(sheet);
-        if (last == 0 || last < headerRow) return 0;
-        return includeHeader ? (last - headerRow + 1) : (last - headerRow);
-    }
-
-
-    /**
-     * Obtiene el número de filas con datos en una hoja de Excel
-     * @param sheet Dispatch de la hoja
-     * @return número de filas
-     */
-    public static int getLastRow(Dispatch sheet) {
-        Dispatch usedRange = Dispatch.get(sheet, "UsedRange").toDispatch();
-        Dispatch rowsRange = Dispatch.get(usedRange, "Rows").toDispatch();
-        return Dispatch.get(rowsRange, "Count").getInt();
-    }
-
     /**
      * Obtiene el número de columnas con datos en una hoja de Excel
      * @param sheet Dispatch de la hoja
@@ -101,73 +274,6 @@ public class ExcelHelpers {
         return Dispatch.get(colsRange, "Count").getInt();
     }
 
-    /**
-     * Filtra filas de un sheet por una o más columnas y criterios múltiples.
-     *
-     * @param sheet        Dispatch de la hoja
-     * @param columns      Lista de columnas a filtrar (puede ser letra A-Z o nombre de header)
-     * @param criteriaMap  Mapa: columna -> lista de valores aceptados
-     * @return Listado de filas filtradas como listas de strings
-     */
-    public static List<List<String>> filterRows(Dispatch sheet, List<String> columns, Map<String, List<String>> criteriaMap) {
-        List<List<String>> result = new ArrayList<>();
-
-        // Obtener UsedRange
-        Dispatch usedRange = Dispatch.get(sheet, "UsedRange").toDispatch();
-        int rowCount = getLastRow(sheet);
-        int colCount = getLastColumn(sheet);
-
-        // Mapear nombres de headers a índices
-        Map<String, Integer> headerIndexMap = new HashMap<>();
-        Dispatch headerRow = Dispatch.call(usedRange, "Rows", 1).toDispatch();
-        for (int c = 1; c <= colCount; c++) {
-            Dispatch cell = Dispatch.call(headerRow, "Cells", 1, c).toDispatch();
-            String header = Dispatch.get(cell, "Value").toString();
-            headerIndexMap.put(header.trim(), c);
-        }
-
-        // Determinar índices de columnas a filtrar
-        List<Integer> filterIndices = new ArrayList<>();
-        for (String col : columns) {
-            if (headerIndexMap.containsKey(col)) {
-                filterIndices.add(headerIndexMap.get(col));
-            } else {
-                // Asumimos que es letra de columna
-                int index = colLetterToIndex(col);
-                if (index <= colCount) {
-                    filterIndices.add(index);
-                }
-            }
-        }
-
-        // Recorrer filas (desde fila 2, porque fila 1 son headers)
-        for (int r = 2; r <= rowCount; r++) {
-            boolean match = true;
-            for (int i = 0; i < filterIndices.size(); i++) {
-                int colIndex = filterIndices.get(i);
-                Dispatch cell = Dispatch.call(usedRange, "Cells", r, colIndex).toDispatch();
-                String value = Dispatch.get(cell, "Value").toString();
-
-                List<String> allowed = criteriaMap.get(columns.get(i));
-                if (allowed != null && !allowed.contains(value)) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) {
-                // Guardar toda la fila
-                List<String> row = new ArrayList<>();
-                for (int c = 1; c <= colCount; c++) {
-                    Dispatch cell = Dispatch.call(usedRange, "Cells", r, c).toDispatch();
-                    Object val = Dispatch.get(cell, "Value").toJavaObject();
-                    row.add(val != null ? val.toString() : "");
-                }
-                result.add(row);
-            }
-        }
-
-        return result;
-    }
 
     /**
      * Convierte letra de columna a índice (A=1, B=2, ...)
@@ -181,23 +287,6 @@ public class ExcelHelpers {
         return index;
     }
 
-    public static Map<String, List<String>> parseFilterCriteria(List<Value> entryList) {
-        Map<String, List<String>> map = new HashMap<>();
-        if (entryList == null) return map;
-
-        for (Value v : entryList) {
-            String json = v.toString(); // cada Value viene como "Column:Criteria"
-            String[] parts = json.split(":", 2);
-            if (parts.length == 2) {
-                String key = parts[0].trim();
-                String[] values = parts[1].split(";");
-                List<String> list = new ArrayList<>();
-                for (String val : values) list.add(val.trim());
-                map.put(key, list);
-            }
-        }
-        return map;
-    }
 
     public static String numberToColumnLetter(int col) {
         StringBuilder sb = new StringBuilder();
@@ -277,7 +366,117 @@ public class ExcelHelpers {
         return result;
     }
 
+    public static int excelColumnLetterToNumber(String col) {
+        int res = 0; col = col.toUpperCase();
+        for (int i = 0; i < col.length(); i++) res = res * 26 + (col.charAt(i) - 'A' + 1);
+        return res;
+    }
+    public static String safeVariantToString(Variant v) {
+        if (v == null || v.isNull()) return "";
+        Object o = v.toJavaObject();
+        return (o != null) ? o.toString() : "";
+    }
+    public static boolean getBool(Dispatch app, String prop) {
+        try { return Dispatch.get(app, prop).getBoolean(); } catch (Exception e) { return true; }
+    }
+    public static int getInt(Dispatch app, String prop) {
+        try { return Dispatch.get(app, prop).getInt(); } catch (Exception e) { return xlCalculationAutomatic; }
+    }
+    public static void putBool(Dispatch app, String prop, boolean v) {
+        try { Dispatch.put(app, prop, v); } catch (Exception ignore) {}
+    }
+    public static void putInt(Dispatch app, String prop, int v) {
+        try { Dispatch.put(app, prop, new Variant(v)); } catch (Exception ignore) {}
+    }
+
+    //Convertir Header Name en Column Index
+    public static int headerNameToColumnIndex(Dispatch sheet, String columnName, int firstRow, int colsCnt){
+        if (columnName == null || columnName.isEmpty())
+            throw new BotCommandException("Column header not provided.");
+        int colIndex = -1;
+        String target = columnName.trim();
+        for (int c = 1; c <= colsCnt; c++) {
+            Dispatch hdrCell = Dispatch.call(sheet, "Cells", firstRow, c).toDispatch();
+            String hdr = safeVariantToString(Dispatch.get(hdrCell, "Value"));
+            if (hdr != null && hdr.trim().equalsIgnoreCase(target)) { colIndex = c; break; }
+        }
+        if (colIndex == -1) throw new BotCommandException("Header not found: " + target);
+        return colIndex;
+    }
+
+    /** Incrementa la COLUMNA de una dirección A1, preservando los '$' si existen.
+     *  Ej: incrementColumnInA1("B3", 2) -> "D3"
+     *      incrementColumnInA1("$B$3", 2) -> "$D$3"
+     */
+    public static String incrementColumnInA1(String address, int step) {
+        if (step < 0) throw new BotCommandException("Step (columns) must be >= 0.");
+
+        A1Ref r = parseA1(address);
+        long newCol = (long) r.col + step;                 // r.col ya es int (1-based)
+        if (newCol < 1 || newCol > EXCEL_MAX_COLS)
+            throw new BotCommandException("Column exceeds Excel limit (XFD / 16384).");
+
+        A1Ref r2 = new A1Ref(r.row, (int) newCol, r.absRow, r.absCol); // nueva ref
+        return buildA1(r2);
+    }
+
+    /** Incrementa la FILA de una dirección A1, preservando los '$' si existen.
+     *  Ej: incrementRowInA1("A4", 4) -> "A8"
+     *      incrementRowInA1("$A$4", 4) -> "$A$8"
+     */
+    public static String incrementRowInA1(String address, int step) {
+        if (step < 0) throw new BotCommandException("Step (rows) must be >= 0.");
+
+        A1Ref r = parseA1(address);
+        long newRow = (long) r.row + step; // usar long para prevenir overflow intermedio
+
+        if (newRow < 1 || newRow > EXCEL_MAX_ROWS) {
+            throw new BotCommandException("Row exceeds Excel limit (1,048,576).");
+        }
+
+        // >>> Crear NUEVA instancia (A1Ref es inmutable)
+        A1Ref r2 = new A1Ref((int) newRow, r.col, r.absRow, r.absCol);
+        return buildA1(r2);
+    }
+
+    // Puedes pegarlo dentro de ConvertColumnToNumber (como private static)
+// o mover a ExcelHelpers si preferís.
+    public static int countTextNumbersInRange(Dispatch sheet, int startRow, int endRow, int colIndex) {
+        if (endRow < startRow) return 0;
+
+        // 1) Construir el rango [startRow..endRow] en colIndex
+        Dispatch start = Dispatch.call(sheet, "Cells", startRow, colIndex).toDispatch();
+        Dispatch end   = Dispatch.call(sheet, "Cells", endRow,   colIndex).toDispatch();
+        Dispatch rng   = Dispatch.invoke(sheet, "Range", Dispatch.Get, new Object[]{ start, end }, new int[1]).toDispatch();
+
+        // 2) Obtener Application y la Address A1 del rango (absoluta)
+        Dispatch app   = Dispatch.get(sheet, "Application").toDispatch();
+        String addr    = Dispatch.get(rng, "Address").toString(); // ej: $B$2:$B$4098
+
+        // 3) Intento 1: Evaluate con funciones en inglés y separador coma
+        //    Cuenta celdas que SON TEXTO y que al aplicar VALUE() resultan NUMÉRICAS.
+        String f1 = "SUMPRODUCT(--ISTEXT(" + addr + "),--ISNUMBER(VALUE(" + addr + ")))";
+
+        try {
+            // Evaluate devuelve Variant; redondeamos a int
+            double d = Dispatch.call(app, "Evaluate", f1).getDouble();
+            return (int)Math.round(d);
+        } catch (Exception ignore) {
+            // 4) Intento 2: misma fórmula con separador ';' (locales que no aceptan coma)
+            String f2 = "SUMPRODUCT(--ISTEXT(" + addr + ");--ISNUMBER(VALUE(" + addr + ")))";
+            try {
+                double d = Dispatch.call(app, "Evaluate", f2).getDouble();
+                return (int)Math.round(d);
+            } catch (Exception ignore2) {
+                // 5) Fallback conservador: no distingue “texto numérico” de “texto no numérico”.
+                //    Aun así, sirve para detectar conversión incompleta a grandes rasgos.
+                Dispatch wf = Dispatch.get(app, "WorksheetFunction").toDispatch();
+                int nonEmpty = (int)Math.round(Dispatch.call(wf, "CountA", rng).getDouble());
+                int numeric  = (int)Math.round(Dispatch.call(wf, "Count",  rng).getDouble());
+                int textish  = Math.max(0, nonEmpty - numeric);
+                return textish;
+            }
+        }
+    }
+
 }
-
-
-
