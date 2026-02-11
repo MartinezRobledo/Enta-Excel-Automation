@@ -21,6 +21,7 @@ import static com.automationanywhere.botcommand.utilities.ExcelHelpers.getNumber
         return_label = "Number of rows",
         return_type = DataType.NUMBER,
         return_name = "NumberOfRows",
+        return_required = true,
         icon = "excel.svg"
 )
 public class GetNumberOfRows {

@@ -141,17 +141,14 @@ public class GetVisibleColumnValues {
         Integer scopeHeaderRow = null;     // fila de header si aplica AutoFilter.Range
 
         // 1) AutoFilter activo y la columna cae dentro del rango del filtro
+        // 1) AutoFilter activo: usar SIEMPRE su Range como "scope" de filas visibles
         try {
             Variant vAF = Dispatch.get(sheet, "AutoFilter");
             if (vAF != null && !vAF.isNull()) {
                 Dispatch autoFilter = vAF.toDispatch();
-                Dispatch afRange    = Dispatch.get(autoFilter, "Range").toDispatch();
-                int frFirstCol = Dispatch.get(afRange, "Column").getInt();
-                int frCols     = Dispatch.get(Dispatch.get(afRange, "Columns").toDispatch(), "Count").getInt();
-                if (absCol >= frFirstCol && absCol <= (frFirstCol + frCols - 1)) {
-                    scopeRange     = afRange;
-                    scopeHeaderRow = Dispatch.get(afRange, "Row").getInt();
-                }
+                Dispatch afRange = Dispatch.get(autoFilter, "Range").toDispatch();
+                scopeRange = afRange;
+                scopeHeaderRow = Dispatch.get(afRange, "Row").getInt(); // fila del encabezado del autofiltro
             }
         } catch (Exception ignore) { /* no AF o no accesible */ }
 

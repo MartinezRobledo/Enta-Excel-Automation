@@ -89,7 +89,16 @@ public class CopyTableOrPivotByName {
 
             @Idx(index = "12", type = AttributeType.CHECKBOX)
             @Pkg(label = "Pivot (Values): excluir Grand Totals", default_value = "false", default_value_type = DataType.BOOLEAN)
-            Boolean pivotExcludeGrandTotals
+            Boolean pivotExcludeGrandTotals,
+
+            // ===== OPCIONES de RETORNO =====
+            @Idx(index = "13", type = AttributeType.CHECKBOX)
+            @Pkg(label = "Retornar con nombre de hoja", default_value = "true", default_value_type = DataType.BOOLEAN)
+            Boolean returnWithSheetName,
+
+            @Idx(index = "14", type = AttributeType.CHECKBOX)
+            @Pkg(label = "Retornar rango fijo ($)", default_value = "true", default_value_type = DataType.BOOLEAN)
+            Boolean returnAbsoluteRange
     ) {
         // --- Workbooks ---
         Session sSrc = ExcelObjects.requireSession(srcSession);
@@ -161,10 +170,26 @@ public class CopyTableOrPivotByName {
         // --- Copiar valores (sin portapapeles) ---
         Dispatch.put(dstArea, "Value2", Dispatch.get(srcRange, "Value2"));
 
-        // --- A1 final ocupado ---
-        String a1 = Dispatch.callN(dstArea, "Address", new Variant[]{ new Variant(false), new Variant(false) }).getString();
-        String sheetName = Dispatch.get(dstSheet, "Name").getString();
-        return new StringValue(sheetName + "!" + a1);
+        // --- A1 final ocupado (parametrizable) ---
+        boolean includeSheet = (returnWithSheetName == null) ? true : returnWithSheetName.booleanValue();
+        boolean absolute     = (returnAbsoluteRange == null) ? true : returnAbsoluteRange.booleanValue();
+
+        // Address(RowAbsolute, ColumnAbsolute [, ReferenceStyle] [, External] [, RelativeTo])
+        String a1 = Dispatch.callN(
+                dstArea,
+                "Address",
+                new Variant[]{ new Variant(absolute), new Variant(absolute) }
+        ).getString();
+
+        if (includeSheet) {
+            String sheetName = Dispatch.get(dstSheet, "Name").getString();
+            // Excel: comillas simples alrededor del nombre; duplicar si contiene ' dentro
+            String quotedSheet = "'" + sheetName.replace("'", "''") + "'";
+            return new StringValue(quotedSheet + "!" + a1);
+        } else {
+            return new StringValue(a1);
+        }
+
     }
 
     // ================== HELPERS ==================
